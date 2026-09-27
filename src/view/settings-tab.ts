@@ -136,6 +136,40 @@ export class MDRazorSettingTab extends PluginSettingTab {
 			);
 
 		new Setting(panel)
+			.setName(tr('行内代码增强', 'Inline Code Enhancement'))
+			.setDesc(
+				tr(
+					'双击编辑器中的行内代码（`code`）时，自动复制其完整内容（不含反引号）到剪贴板，弹出「已复制」提示；光标与选区保持原生行为（双击仍为选词），单击、拖选与修饰键点击不受影响。仅编辑模式（实时预览/源码模式）生效',
+					'When you double-click inline code (`code`) in the editor, its full content (without the backticks) is copied to the clipboard with a "Copied" notice; the cursor and selection keep their native behavior (double-click still selects the word under the pointer). Single click, drag selection and modifier clicks are unaffected. Applies in the editor (Live Preview/source mode) only.',
+				),
+			)
+			.addToggle((toggle) =>
+				toggle
+					.setValue(this.plugin.settings.inlineCodeEnhancer)
+					.onChange(async (value) => {
+						this.plugin.settings.inlineCodeEnhancer = value;
+						await this.plugin.saveSettings();
+					}),
+			);
+
+		new Setting(panel)
+			.setName(tr('Callout 增强', 'Callout Enhancement'))
+			.setDesc(
+				tr(
+					'实时预览下单击 callout 不再退回纯文本（`>` 引用源码），保持渲染外观；点击 callout 右上角的「编辑这个区块」按钮时，在保留官方渲染外观的前提下就地编辑其标题与正文纯文本，完成后自动写回并重新渲染。编辑正文时粘贴多行文本会自动补全换行后的 `>`（已有的 `>` 前缀会被剥离，避免出现 `> >`）。仅实时预览模式生效',
+					'In Live Preview, clicking a callout no longer reverts it to plain text (the raw `>` source); the rendered appearance is kept. Clicking the callout\'s "Edit this block" button lets you edit its title and body as plain text inside the official rendered appearance, then writes the result back and re-renders. When pasting multi-line text into the body, the leading `>` of each new line is completed automatically (existing `>` prefixes are stripped so you never get `> >`). Applies to Live Preview only.',
+				),
+			)
+			.addToggle((toggle) =>
+				toggle
+					.setValue(this.plugin.settings.calloutEnhancer)
+					.onChange(async (value) => {
+						this.plugin.settings.calloutEnhancer = value;
+						await this.plugin.saveSettings();
+					}),
+			);
+
+		new Setting(panel)
 			.setName(tr('MD文档光标和滚轴位置持久化', 'Remember Cursor & Scroll Position'))
 			.setDesc(
 				tr(

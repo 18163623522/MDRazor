@@ -22,7 +22,12 @@
  *   - 记录并统一清理 setTimeout 句柄，恢复/卸载时取消未触发的调度；
  *   - 修改已懒加载插件的延迟（delay 从非 0 改为另一非 0 值）不重载
  *     正在运行的插件，仅对仍未加载的插件按新延迟重新调度；新延迟
- *     在下一次启动时生效。
+ *     在下一次启动时生效；
+ *   - flip 幂等：只转换「已加载且持久化启用」的插件。持久化已停用说明
+ *     它已是懒加载常态（会话内运行 + 下次启动不自动加载），无对象可转换，
+ *     不做卸载重载 —— 否则本插件自身被热重载（onload → start() 重跑）时
+ *     会把接管中的插件白白卸载重载一遍，销毁其视图（例：Glimpse 音乐面板
+ *     被重建到右侧边栏的新分栏，用户看到布局无故变化）并重置其会话状态。
  *
  * 外部停用同步（轮询判据，逆向自 Obsidian 1.13.7；2.5.4 动作由
  * 「删除配置」改为「标记休眠」）：
@@ -81,8 +86,9 @@ const hasOwn = (obj: object, key: string): boolean =>
 
 /** 懒加载控制器对外接口（供设置标签页与主控制器调用） */
 export interface LazyLoadControl {
-	/** 应用懒加载：调度未加载插件的延迟补载，并把已加载的懒加载插件翻转为持久化禁用；
-	 *  仅处理接管中的条目（active !== false），休眠条目不调度 */
+	/** 应用懒加载：调度未加载插件的延迟补载，并把「已加载且持久化启用」的
+	 *  懒加载插件翻转为持久化禁用；仅处理接管中的条目（active !== false），
+	 *  休眠条目不调度。持久化已停用的插件视为已处于懒加载常态，不做处理 */
 	start(): void;
 	/** 恢复全部懒加载插件为持久化启用（总开关关闭 / 本插件卸载时调用）；
 	 *  仅处理接管中的条目，休眠条目不动（用户主动停用的插件不擅自启动） */
@@ -131,6 +137,12 @@ onConfigChange?: (pluginId: string, active: boolean) => void,
 		const manifest = pluginsAPI().manifests[pluginId];
 		return manifest != null && isCommunityManifest(manifest);
 	};
+
+	/** 插件当前的「持久化启用」状态（第三方插件设置开关的真实数据源）。
+	 *  接管中的插件持久化态恒为停用，因此「已加载 + 持久化启用」才代表
+	 *  它仍需被 flip 转换；「已加载 + 持久化停用」已是懒加载常态。 */
+	const isPersistentlyEnabled = (pluginId: string): boolean =>
+		pluginsAPI().enabledPlugins.has(pluginId);
 
 	/**
 	 * 是否为接管中的懒加载条目：延迟 > 0、属社区插件、且未被标记休眠。
@@ -246,14 +258,18 @@ onConfigChange?: (pluginId: string, active: boolean) => void,
 	};
 
 	/** 把「当前已加载」的懒加载插件翻转为懒加载模式：持久化禁用 + 会话内保持运行。
-	 *  经全局串行队列执行；卸载完成后再计时重载，等待窗口关闭后放行下一项。 */
+	 *  经全局串行队列执行；卸载完成后再计时重载，等待窗口关闭后放行下一项。
+	 *  仅对「持久化启用」的插件生效：持久化已停用说明它早已是懒加载常态，
+	 *  无需转换，此时卸载重载纯属破坏（销毁视图 + 重置会话状态）。 */
 	const flipToLazy = (pluginId: string): void => {
 		if (!isPluginLoaded(pluginId)) return;
+		if (!isPersistentlyEnabled(pluginId)) return;
 		enqueueLoad(async () => {
 			const pm = pluginsAPI();
 			if (!isPluginLoaded(pluginId)) return; // 队列等待期间已被处理
 			await waitSlotIdle();
 			if (!isPluginLoaded(pluginId)) return;
+			if (!isPersistentlyEnabled(pluginId)) return; // 等待期间已无需转换
 			await pm.disablePluginAndSave(pluginId);
 			// 异常防御：卸载未完成（实例仍在）时放弃重载，避免状态混乱
 			if (isPluginLoaded(pluginId)) return;
@@ -281,6 +297,13 @@ onConfigChange?: (pluginId: string, active: boolean) => void,
 				// 队列串行 + waitSlotIdle 保证多插件 flip 不再互相踩踏窗口。
 				// 测量 Promise 由 flip 作业内的 await 消费，此处不等待（start 非异步），
 				// void 标记丢弃；未测量兜底由作业内 trackLoad 幂等返回同一 Promise。
+				//
+				// 但仅限「持久化启用」的插件：持久化已停用 = 它已是本模块的懒加载
+				// 常态（本会话补载 / 上次已 flip），转换已无对象，直接跳过。典型
+				// 触发场景是本插件自身被热重载（每次重建 main.js 都会重跑 onload →
+				// start）：旧实现会把接管中的插件再卸载重载一遍，无谓销毁其视图
+				// （Glimpse 音乐面板因此被重建到右侧边栏的新分栏）并重置会话状态。
+				if (!isPersistentlyEnabled(pluginId)) continue;
 				void onEnable?.(pluginId);
 				window.setTimeout(() => flipToLazy(pluginId), START_FLIP_DELAY_MS);
 			} else {

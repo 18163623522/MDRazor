@@ -52,6 +52,8 @@ import { createStartupTimingRecorder } from './lazy-load/startup-check';
 import type { StartupTimingRecorder } from './lazy-load/startup-check';
 import { registerMouseLineHighlight, applyMouseLineHighlightClass, removeMouseLineHighlightClass } from './general/mouse-line-highlight';
 import { registerCurrentLineHighlight, applyCurrentLineHighlightClass, removeCurrentLineHighlightClass } from './general/current-line-highlight';
+import { registerInlineCodeEnhancer } from './general/inline-code-enhancer';
+import { registerCalloutEnhancer } from './general/callout-enhancer';
 import { registerMeasureGuard } from './general/measure-guard';
 import { createClickSyncExtension } from './general/click-sync';
 
@@ -156,6 +158,13 @@ export default class MDRazorPlugin extends Plugin {
 
 		// 注册通用功能：当前行高亮（.cm-active 光标行，body 常驻开关类驱动）
 		registerCurrentLineHighlight(this, () => this.settings.currentLineHighlight);
+
+		// 注册通用功能：行内代码增强（单击行内代码 → 全选内容并复制，点击时即时探测开关）
+		registerInlineCodeEnhancer(this, () => this.settings.inlineCodeEnhancer);
+
+		// 注册通用功能：Callout 增强（实时预览下单击 callout 不退回纯文本；
+		// 「编辑这个区块」按钮在保留官方外观的前提下就地编辑纯文本；粘贴多行自动补 `>`）
+		registerCalloutEnhancer(this, () => this.settings.calloutEnhancer);
 
 		// 注册编辑器测量守护（始终开启）：样式注入/晚到字体触发重排时
 		// 强制 requestMeasure 刷新 CM6 行高表，根治「点击行上半部落到上一行」

@@ -20,6 +20,13 @@ export interface MDRazorSettings {
 	 *  默认关闭——与 Custom.css 的 activeline-highlight 效果相同，避免
 	 *  两边同时开启叠加；不启用该 snippet 时也能独立保持 */
 	currentLineHighlight: boolean;
+	/** 行内代码增强：双击编辑器中的行内代码时，自动复制其完整内容
+	 *  （不含反引号）到剪贴板，弹出「已复制」提示；光标与选区保持原生行为 */
+	inlineCodeEnhancer: boolean;
+	/** Callout 增强：实时预览下单击 callout 不使其退回纯文本（`>` 引用源码），
+	 *  保持渲染外观；「编辑这个区块」按钮在保持渲染的前提下进入纯文本编辑，
+	 *  且粘贴多行文本时自动为后续行补全 `>` 前缀并校验 */
+	calloutEnhancer: boolean;
 
 	// ── 懒加载 (controller/lazy-load/) ──
 	/** 懒加载总开关：关闭时全部插件按 Obsidian 默认方式（自然顺序）加载 */
@@ -175,6 +182,9 @@ export const DEFAULT_SETTINGS: MDRazorSettings = {
 	mouseMoveLineHighlight: true,
 	// 默认关闭（显式例外）：与 Custom.css「当前行高亮」为同一效果，避免叠加
 	currentLineHighlight: false,
+
+	inlineCodeEnhancer: true,
+	calloutEnhancer: true,
 
 	lazyLoadEnabled: false,
 	lazyLoadPlugins: {},

@@ -4,6 +4,169 @@
 
 ---
 
+## 未发布 (2026-09-27)
+
+### Callout 编辑面板：类型/元数据候选改用自带下拉（超屏 + 滚动不跟随）
+
+**需求：** 类型候选下拉列表太长超出屏幕；滚动页面时下拉不跟随输入框、随页面滚走（用户实测反馈，首版实现为原生 `datalist`）。
+
+**实现位置：** `src/controller/general/callout-enhancer.ts`（`addField` 重写 + 冒泡拦截清单补 `paste`/`drop`）、`styles.css`
+
+**避坑记录：**
+
+1. **原生 `datalist` 弹层不可控是两个症状的共同根因** — 弹层由浏览器绘制：①尺寸/样式不可控，类型候选 70 项（内置 30+ ∪ 片段扫描 ∪ 文档在用）直接超屏；②按**屏幕坐标**定位且由浏览器管理，Chromium 对嵌套滚动容器里的锚点不会重定位，编辑器一滚弹层留在原地。换自带下拉后两症状一并消失，且获得过滤/键盘导航/翻转方向等原生弹层给不了的控制权。
+2. **滚动跟随选「in-scroller 绝对定位」而非「fixed + scroll 监听」** — 下拉 `position: absolute` 挂在字段内（字段 `position: relative`），与编辑器内容同处一个滚动上下文，跟随是**结构保证**的；fixed 方案要在 document 上捕获 scroll 重定位，合成器平滑滚动期可能滞后一帧（本项目行高亮已为 `:hover` 滞后付出过显式标记类的代价），还要处理多滚动容器。绝对定位唯一的风险是被祖先裁剪，见第 3 条。
+3. **祖先裁剪有两类，`overflow` 只是一类（用户实测复现：下拉仍被关在 callout 显示域里）** — 本库 Callout.css 片段给 `.callout` 设了 `overflow: hidden`（圆角裁切用，grep 片段目录实证），核心 `.callout` 同款、核心 `.cm-embed-block:hover` 也有 —— 这类用编辑态 `overflow: visible !important` 解除。但首版修复后用户实测下拉仍被截断，从 asar 里解出核心 app.css 才找到真凶：**`.markdown-source-view.mod-cm6 .cm-content > [contenteditable=false] { contain: paint !important }`** —— callout 块 widget 正是 `.cm-content` 的直接子节点且 `contenteditable=false`，`contain: paint` 把**所有后代**的绘制裁在 widget 盒内，且 `overflow: visible` 对它无效。修法：编辑态对 widget 补 `contain: none !important`（特异性 (0,6,0)+!important 压过核心 (0,4,0)+!important）。**教训：「浮层被裁」要查两道闸 —— `overflow` 之外还有 `contain: paint`（以及 filter/clip-path 等），只解前者可能白改。**
+4. **解除 `contain: paint` 必须补 `isolation: isolate`，否则编辑态配色突变** — 渲染态 widget 的 paint 隔离顺带**中和**了 callout 的 `mix-blend-mode`：本库主题 Ethereal 经 `--callout-blend-mode` → `--highlight-mix-blend-mode` 传入 **darken**（theme.css 实证）。contain 在时，callout 对着隔离组的透明底混合 = 无效，外观即普通 alpha 合成；只解除 contain 的话，darken 会突然作用于真实页面背景，编辑态配色与渲染态不一致。`isolation: isolate` 提供等价的混合隔离但**不裁剪绘制**，正好补位。另补 `z-index: 1`：下拉伸出 widget 后要盖过排在后面的兄弟 embed-block（核心给它们设了 `position: relative`，按 DOM 序会绘制在下拉之上）。
+5. **pointerdown preventDefault 与 2026-09-23 第 13 条同坑同解** — 在下拉容器上对 pointerdown preventDefault（保住输入框焦点：否则 mousedown 默认行为让输入框失焦，blur 先一步收起下拉、条目根本点不到）会连带取消后续兼容鼠标事件（mousedown/click），所以**选中逻辑必须直接挂条目的 pointerdown**，不能依赖 click。
+6. **Esc/Enter 的层级：下拉开着时先只动下拉** — 面板级 keydown（挂在 `.callout` 上）对 Escape 是「提交并关闭会话」、对 Enter（标题框）是「跳正文」。下拉展开时这两键必须在 input 自己的 keydown（target 阶段先于面板级冒泡）里 preventDefault + stopPropagation；下拉关闭时放行冒泡，维持面板原有行为。
+7. **过滤用「不区分大小写子串」，零匹配必须收起** — 空串显示全部；每次输入重建条目（70 项重建成本可忽略）。`open()` 里零匹配若只提前 return 不 `close()`，`is-open` 还挂着，会留下一个空白弹层。
+8. **向上翻只在展开时算一次** — 按「输入框到 `.cm-scroller` 底/顶的剩余空间」与下拉实际高度（+4px 展开间隙）比较决定 `is-up`；此后滚动由绝对定位天然跟随，无需重算。滚动容器选 `.cm-scroller` 而非 viewport：编辑器视口裁剪来自它（比 viewport 更紧，中间层已由第 3 条解除）。
+9. **`overscroll-behavior: contain`** — 下拉内部滚到底后继续滚，滚动链会交给编辑器滚动容器，正在挑候选时整个编辑器跟着滚。contain 把链截断在下拉内。
+10. **顺带堵掉的潜伏 bug：`paste`/`drop` 此前不在冒泡拦截清单里** — 正文文本域有自己的 paste 处理器（preventDefault + stopPropagation），但类型/元数据输入框没有：粘贴事件一路冒泡进 CM6，若 CM 选区恰位于 callout 源码行首（很可能 —— 用户正对着这个 callout 编辑），粘贴兜底扩展会 preventDefault 并把内容写进文档 → widget 重建 → **编辑面板连同未提交内容当场销毁**。drop 同理。两者纳入 `swallowedEvents` 后，面板内任何输入路径都不再可能触碰文档。
+11. **字段监听器零清理负担** — 自带下拉的所有监听都挂在面板自有节点（input / dropdown / 条目）上，面板随会话销毁即被 GC，没有任何 doc/window 级监听，无需 dispose（对比：挂在 `.callout` 上的监听必须清理，因为 `closeSession(false)` 后 callout 仍留在 DOM 里）。
+
+---
+
+## 未发布 (2026-09-27)
+
+### Callout 编辑面板：正文文本域高度随内容自适应增高
+
+**需求：** 「编辑这个区块」面板的正文文本域高度应随输入自适应变大，而不是内容超出固定高度后用滚动条代替（用户实测反馈，附截图：文本域右侧出现滚动条与 resize 手柄）。
+
+**实现位置：** `src/controller/general/callout-enhancer.ts`（`fitBodyHeight` + 监听接线）、`styles.css`
+
+**避坑记录：**
+
+1. **先置 `height: auto` 再按 `scrollHeight` 设值，顺序不能反** — `scrollHeight` 以**当前布局**计算：不先重置高度，内容删减后 `clientHeight` 仍是旧的大高度，而 `scrollHeight ≥ clientHeight`，测不出变矮，高度只会涨不会回落。置 auto 后 client 塌到 CSS 的 `min-height: 5em` 下限，空内容时 `scrollHeight = clientHeight` 稳定在 5em，不抖动。
+2. **首测必须量在挂上「解除限宽」类之后** — 渲染态 callout widget 被主题限宽在 200px（见 2026-09-23 第 14 条），`WIDGET_EDITING_CLASS` 挂上后才是全宽。若在挂类前测量，按 200px 折行，首测高度虚高，面板一打开就多出一段空白。故 `openEditor` 里的首测放在 `addClass(WIDGET_EDITING_CLASS)` 之后。
+3. **宽度变化必须由 ResizeObserver 兜底，否则滚动条换个时机卷土重来** — 高度适配只挂在 input/粘贴上；窗口缩放、侧栏开合会改文本域宽度 → 折行数变化 → 内容变高但高度没动 → 滚动条重现（正是本次要消灭的东西）。ResizeObserver 挂在文本域自身上：初次 observe 必回调一次，兜住挂载后的最终宽度（与 openEditor 的首测重复，但高度已一致时写回不改变布局，不形成回调循环——fit 是幂等的）。ResizeObserver 在 iOS WKWebView / Android WebView 均可用（iOS 13.4+），移动端无兼容问题。
+4. **粘贴是程序化赋值，不触发 `input` 事件** — `insertIntoTextarea` 直接改 `value` 并 `setSelectionRange`，浏览器不为程序化赋值派发 input，故粘贴路径单独调一次 `fitBodyHeight`。IME 组合输入（中文输入法）期间 input 照常派发且组合文本计入 value，增高跟随组合内容，无需专门处理。
+5. **`resize: vertical` 与自适应互相矛盾，去手柄** — 自适应后每次输入都重设高度，用户拖大的尺寸在下一次按键即被抹掉；留着手柄只会制造「拖了又缩回去」的怪异感。`min-height: 5em` 保留为下限。不采用 CSS `field-sizing: content`：WKWebView 尚未支持，移动端会退化，scrollHeight 方案全平台一致。
+6. **动态样式必须走 `setCssProps`，不能 `el.style.height = ...` 直赋** — 审核环境的 `eslint-plugin-obsidianmd` 0.4.x 有 `no-static-styles-assignment`（error 级），直赋直接 lint 红。`setCssProps` 内部就是逐键 `style.setProperty`，对标准属性同样有效（`{ height: '85px' }`）；两次调用之间读 `scrollHeight` 会强制同步布局，测量准确。
+
+---
+
+## 未发布 (2026-09-27)
+
+### 鼠标/滚轮行高亮：排除代码块
+
+**需求：** 取消「鼠标/滚轮移动时行高亮」在代码块上的悬停高亮——代码块自身已有底色，叠加后把语法高亮配色盖掉、块的左右边界也糊成一团。随后追加：代码块内的**光标**也改回原生（不再被本功能的「箭头光标」兜底覆盖）。
+
+**实现位置：** `src/controller/general/mouse-line-highlight.ts`、`styles.css`
+
+**避坑记录：**
+
+1. **两条高亮入口必须成对改，只改一处必漏** — 本功能有两条并列路径（见文件头与 styles.css 注释）：鼠标**物理移动**走 CSS `:hover`（浏览器原生 hit-test，不经过 JS），滚动帧走 JS `elementFromPoint` + `.mdrazor-line-highlight` 标记类。**凡调整「哪些行参与高亮」，CSS 与 JS 都得改**：只改 JS，鼠标悬停照旧亮；只改 CSS，滚动帧仍会挂类（无视觉差异，但 DOM 写次数与语义不对）。
+2. **代码块在 CM6 有两种形态，要分别排除** — ①源码态：`.cm-line.HyperMD-codeblock`（含 `-begin`/`-end`/`-bg` 变体），首尾两行围栏也在内；②实时预览未激活态：整个块被替换成一个块级 widget `.cm-preview-code-block`。同族 widget 的 DOM 已在本文件 2026-09-23 第 1 条记过：callout widget 是 `.cm-content` 的**直接子节点**、`.cm-line` 的兄弟 —— 即 widget **不在任何 `.cm-line` 内**，`:hover` 本就命中不到它。故 CSS 的 `:not(:has(.cm-preview-code-block))` 是**防御性**写法（万一某版本把它放进行内），真正必须的是 `.HyperMD-codeblock` 那条。
+3. **「命中代码块」与「指针不在行上」必须区分，否则会走到中心回退** — `findLineUnderPointer()` 有一条为滚动条拖拽保留的回退：指针不在任何行上时用 `editorCenter()` 取编辑器中心那一行，保证滚动高亮不中断。而代码块 widget 不属于任何行（`closest('.cm-line')` 为 null），**天然会被误判成「指针不在行上」** → 回退中心 → 鼠标停在代码块上滚动时高亮跳到编辑器正中那一行（与鼠标位置毫无关系）。修法：先判 `isCodeBlockHit(hit)`（`closest('.HyperMD-codeblock, .cm-preview-code-block')`），命中即 `return null` **且不进入回退分支**；回退路径（中心点）同样补了这道判据。
+4. **用 `:not()` 链而非 `:not(:is(...))`** — 写作 `.cm-line:not(.HyperMD-codeblock):not(:has(.cm-preview-code-block))`：两条 `:not()` 是 AND 关系、语义直观，而把 `:has()` 嵌进 `:is()` 里可读性明显更差。
+5. **CM5 变体（`.CodeMirror-linebackground`）未同步排除** — 那两个选择器是旧版兼容分支，CM5 里行背景层自身不带 `HyperMD-codeblock`（该类挂在 `pre.CodeMirror-line` 上），加 `:not()` 不生效；且 Obsidian 1.6+ 全为 CM6，该分支实际是死代码，不值得为它绕路。
+6. **「光标改回原生」要动两条规则，且不能只靠给 `*` 加 `:not()`** — 光标改写有两处：①`body.mdrazor-mouse-line-highlight-enabled .cm-line:hover`（**静止**悬停期生效，加 `:not()` 即可）；②`body.mdrazor-mouse-moving .markdown-source-view.mod-cm6 *`（**移动期**的「全编辑器加固」，`*` 通配 + `!important` 把所有后代一网打尽，代码块也被吃掉）。只改①，移动期代码块仍是箭头——而移动期恰恰是本功能的主要工作期，用户一移鼠标就能看到。②的修法不是给 `*` 加 `:not(.HyperMD-codeblock *)`（`:not()` 里塞带后代组合子的复杂选择器，兼容性与可读性都不划算），而是在它**之后**追加一条**更高特异性**的还原规则：`body.mdrazor-mouse-moving .markdown-source-view.mod-cm6 .HyperMD-codeblock` = `(0,4,1)`，压过加固规则的 `(0,3,1)`，同样 `!important`。
+7. **还原用 `cursor: auto`，不用 `cursor: text`** — `.cm-line` 在 `.cm-content`（contenteditable）内，`auto` 由 UA 解析为 I-beam，正是原生；而实时预览未激活代码块的块级 widget **不在** contenteditable 内，`auto` 正好回到它自己的原生光标。一条 `auto` 同时覆盖两种形态，写成 `text` 反而会把 widget 内的光标也强行变成 I-beam（与原生不符）。
+
+---
+
+## 未发布 (2026-09-23)
+
+### Callout 增强：单击不退回纯文本 + 就地编辑纯文本 + 粘贴自动补 `>`
+
+**需求：** 设置 → 通用新增「Callout 增强」（默认开启）：实时预览下单击 callout 不使其退回纯文本；点「编辑这个区块」按钮时，在 callout 正常渲染的外观里就地编辑标题/正文纯文本；粘贴多行文本自动补全换行后的 `>` 并校验。
+
+**实现位置：** `src/controller/general/callout-enhancer.ts`（新增）、`src/model/settings.ts`、`src/view/settings-tab.ts`、`src/controller/main.ts`、`styles.css`
+
+**避坑记录：**
+
+1. **实时预览的 callout 是 Obsidian 自己的 CM6 块级 replace widget，不是「带样式的引用行」** — 读本机 `obsidian-1.13.7.asar` 的 app.js/app.css 实证：DOM 为 `.cm-content` → `.cm-embed-block.cm-callout` → `.markdown-rendered` → `.callout`；`.cm-embed-block.cm-callout` 是 `.cm-content` 的**直接子节点**（`.cm-line` 的兄弟，不在任何 `.cm-line` 内），且渲染态下 `.callout-content` 里**没有** `.cm-line`/`.HyperMD-quote` —— 源码被整体替换掉了。`.HyperMD-quote` 只在**未渲染**（源码态）才出现。判据：渲染态查 `.callout-content .cm-line` 数量为 0。
+2. **「单击就退回纯文本」的根因是选区重叠守卫，不是类切换** — Obsidian 只在「没有任何选区与 callout 源码区间重叠」时才发出该 widget：`m = t.hasFocus ? d.selection.ranges : []`、`if(!b(K,G)) C.push(w({widget:o,side:1,block:!0},K,G))`，其中 `IL(e,t,n){ return e.from<=n && e.to>=t }` —— **选区触碰区间边界也算重叠**。而单击会触发 Obsidian 自己的 `hookClickHandler` → `selectElement()`，后者派发**覆盖整个 callout 源码区间**的选区，widget 随即被撤掉。判据：点 callout 后若 `.cm-embed-block.cm-callout` 消失、`.cm-line.HyperMD-quote` 出现，即是这条链。
+3. **捕获阶段 `preventDefault()` 即可阻断该选区派发，但必须同时拦 mousedown** — `Gm()` 挂的 click 监听器在 `event.defaultPrevented` 时直接跳过，故在 `workspace.containerEl` 上以 capture 监听 click 并 preventDefault 就能让 callout 保持渲染；然而 CM6 自己的 mousedown 处理器会把光标放进 widget 区间（边界也算重叠），widget 会在 click 之前就被撤掉，click 处理器那时已拿不到 widget —— 两者缺一不可。
+4. **必须放行交互元素，否则会砸掉 callout 内的正常操作** — 一刀切拦截会连带屏蔽 callout 里的链接、折叠箭头（`.callout-fold`）、嵌入块。故除「编辑这个区块」按钮外，命中 `a / button / input / textarea / select / [contenteditable] / .callout-fold / .internal-link / .external-link / .markdown-embed / .interactive-child` 的点击一律放行原生行为。代价：在这些元素上点击仍可能触发原生退回纯文本，属可接受取舍。
+5. **「保持官方 widget + 就地编辑那段源码」不可能，两者互斥** — widget 把源码替换掉了。故采用「**保留官方 `.callout` 外观容器、临时替换其内容**」：编辑期间给 `.callout` 加 `.mdrazor-callout-editing`，用 CSS 隐藏 `.callout-title`/`.callout-content`，并在同一个 `.callout` 内插入编辑面板（图标从原 `.callout-icon` 克隆，配色沿用 `rgb(var(--callout-color))`），边框/底色/圆角/主题变量全部照旧 → 外观与官方渲染一致。提交时把「标题 + 正文行」重建为 `> [!type] title` + `> body` 写回，widget 随即重新渲染。
+6. **编辑期间绝不改文档** — 一旦派发事务，Obsidian 会重建 widget、把编辑面板连同焦点一起销毁，输入直接断掉。故只在提交时派发一次；代价是编辑期间若 widget 被外部重建，未提交内容会丢失（`isConnected` 为假即放弃该会话）。
+7. **编辑面板位于 `.cm-content` 内部，事件会冒泡进 CM6** — keydown/input/paste 等若不拦截，CM6 会同时改文档（光标乱跳、内容被改）。故对面板内 `keydown / keypress / keyup / beforeinput / input / cut / copy / mousedown / mouseup / click / dblclick / pointerdown / pointerup / focusin / focusout` 一律 `stopPropagation`。**「完成」按钮必须在 `closeSession` 之前 `stopPropagation`**：closeSession 会把面板（连同其上的监听器）从文档摘除，而事件传播路径在派发时已确定，之后仍会继续冒泡到 `.cm-content`。
+8. **`closeSession` 必须早于抓取 DOM 引用** — 提交上一个会话会触发重渲染；若先抓 `calloutEl` 再提交，新面板会被建到已脱离文档的节点上（不可见）。
+9. **`posAtDOM` 不足以定位 widget 区间** — 块级 replace widget 的 `posAtDOM` 在不同 CM6 版本可能落在区间起点、终点或紧邻位置。故同时用「DOM 映射 + 坐标映射」取候选，各自再试 ±1 偏移，取第一个能解析出 callout 的结果；解析不出即返回 null（宁可不打开面板，也不误伤普通引用块）。
+10. **粘贴自动补 `>` 与校验** — 正文文本域粘贴时先规范化（CRLF/CR → LF、剥掉粘贴内容里已有的 `>`/`> ` 前缀以免出现 `> >`、去行尾空白），提交时每行统一补 `>`（空行补 `>` 本身）。另注册一个保守的 CM6 粘贴兜底：仅当光标位于 callout 源码**行首**且粘贴内容为多行时才按 `>` 前缀展开，其余一律放行原生粘贴。
+11. **`createEl('input'|'textarea')` 已由 obsidian.d.ts 的泛型重载推断出元素类型** — 再写 `as HTMLInputElement` 会被 `@typescript-eslint/no-unnecessary-type-assertion` 判错（`npm run lint` 全量必跑才看得到）。
+12. **`target.closest(交互选择器)` 会向上匹配到编辑器自身 —— 抑制逻辑「永不执行」的真凶（用户实测复现）** — 首版放行交互元素时直接写 `target.closest(INTERACTIVE_SELECTOR)`，而该选择器含 `[contenteditable="true"]`：编辑器自身的 `.cm-content` 正是 `contenteditable="true"`，且是 callout widget 的**祖先**。于是**编辑器内任何点击**（含点 callout）都命中「交互元素」→ 提前 return → 既不 preventDefault 也不 stopPropagation → 单击 callout 照旧退回纯文本。**修法：判定必须限定在 widget 内部** —— `hit !== widget && widget.contains(hit)`；祖先（`.cm-content`）不满足 `contains`，故不再误判，而 widget 内的链接/折叠箭头/嵌入块仍正确放行。**教训：凡用 `closest()` 做「这个元素是不是我关心的那类」判定，都要再问一句「它会不会顺着祖先链匹配到我自己的容器」。**
+13. **不要顺手拦 `pointerdown`** — 拦 `mousedown` + `click` 已足够（CM6 的选区放置走 `mousedown`，Obsidian 的 `selectElement` 走 `click`）；而对 `pointerdown` 调 `preventDefault()` 会让浏览器**不再派发兼容鼠标事件**（mousedown/mouseup/click），反而把本模块自己的 click 处理一起干掉。另注：对 `mousedown` 调 `preventDefault()` 不会取消后续的 `click`，两者互不冲突。
+
+14. **callout widget 的宽度由主题决定，其右侧同一行的空白区不属于 widget（用户实测反馈）** — 本库 `Callout.css` 用 `width: fit-content` + `min-width: 200px`，实测 widget 盒 **200px 宽**、而 `.cm-content` **900px** 宽；`elementFromPoint(widget.right + 40, 行中线)` 返回 **`DIV.cm-content`** 本身（`closest('.cm-embed-block.cm-callout')` 为 null）。于是点这块空白照样退回纯文本。修法：`resolveCalloutWidget()` 在 DOM 祖先链未命中时退回**几何判定** —— 点击落在 `.cm-content` 矩形内、且 Y 落在某个 widget 的垂直带内、X 在其左边界之后，即认定属于该 callout。普通文本行的 Y 不会与 callout 垂直带重叠，故不误伤（已实测对照）。
+15. **「保持渲染」与「可选中文本」可以并存，关键是 mousedown 只 stopPropagation、不 preventDefault** — 首版在 mousedown 上 preventDefault，顺带把浏览器原生文本选择也堵死了（用户实测反馈「希望能选中渲染后 callout 里的文本」）。改为只 `stopPropagation()`（阻断 CM6 的 MouseSelection 放置光标），把默认行为留给浏览器。**实测（obsidian 1.13.7）在 widget 内建立 DOM 选区后 widget 依然渲染**（`widgetStillRendered: true`、`.HyperMD-quote` 行数 0、CM6 选区不动）—— 即 **CM6 不同步落在 widget 内的 DOM 选区**，故不 preventDefault 是安全的。另在 `styles.css` 给 widget 加 `user-select: text`（可继承）确保文本可选。
+16. **验证手法：用 window 冒泡探针判断「抑制是否执行」** — 我们的处理器在 `.workspace` 捕获阶段 `stopPropagation()`，事件**不会**到达 document/window 的冒泡监听器。因此不能用「读下游 `defaultPrevented`」判断，正确判据是**探针是否触发**：`probeFired === false` ⇒ 抑制执行了；`true` ⇒ 未执行。实测四例：点 callout 本体（`probeFired:false`，widget 保持）、点其右侧空白（`probeFired:false`，widget 保持）、点普通文本行（`probeFired:true`，光标正常移动到 L18，无过度抑制）、在 callout 内建 DOM 选区（widget 保持）。
+
+17. **编辑态外观：不要隐藏官方 `.callout-title`，也不要重画标题行（用户实测反馈「非常丑，除了背景其他都没还原」）** — 首版用 `display: none` 把官方 `.callout-title` 和 `.callout-content` 一起隐藏，另起一行自画「图标克隆 + 类型徽标 + 输入框」。结果官方标题行的**图标、配色、字号、间距全被丢掉**，只剩 `.callout` 的底色像 callout。修法：**尽量不重画** ——
+    - 标题输入框**插进官方 `.callout-title` 行内**（只隐藏 `.callout-title-inner` 的文字），于是 `color`、`font-size: var(--callout-title-size)`、`line-height`、`gap`、`padding` 全部从官方标题行**原样继承**；
+    - 图标根本不碰（它是官方 DOM，本来就在）；
+    - 删掉自造的类型徽标 `[!type]`（官方渲染不显示它，属多余 chrome）。
+    实测对齐结果（同一 callout，编辑态 vs 渲染态）：标题行高 **34px = 34px**、`padding 4px 12px` 一致、`color rgb(218,218,218)` 一致、`font-size 20px` 一致、图标 **18×18 / `rgb(138,92,245)` / display:flex** 一致、`.callout` 的 `backgroundColor`（`oklch(0.603458 0.21722 292.49 / 0.1)`）/ `borderLeftColor` / `borderRadius` / `mixBlendMode` 全部一致。
+18. **`input` 的固有高度会把标题行撑高 4px** — 输入框设 `padding: 0; border: none` 后实测仍比官方标题文字高 4px（30 vs 26），导致标题行 38px vs 渲染态 34px。修法：显式 `height: 1.3em`（随字号缩放），并把下划线从 `border-bottom` 换成 **`box-shadow: inset 0 -1px 0 0 color-mix(...)`** —— box-shadow 不参与布局，改后标题行回到 **34px**、输入框 26px。
+19. **复刻内边距要读官方元素的「计算值」，不要信 CSS 变量** — 首版用 `padding: var(--callout-content-padding)`，实测本库该变量解析为 **0**（官方 `.callout-content` 的真实计算内边距是 `0px 12px`，来自主题/片段的直接声明），文本域因此贴边。修法：打开面板时读 `getComputedStyle(contentEl).padding` 与 `.backgroundColor`，经 `setCssProps()` 以自定义属性（`--mdrazor-callout-content-padding` / `--mdrazor-callout-content-bg`）下发到文本域。改后 `0px/12px` 与官方一致。**通用教训：主题/片段可以用直接声明覆盖掉变量，跨主题取样式时「读计算值」比「读变量」可靠。**
+20. **编辑态必须解除主题对 widget 的限宽（用户实测反馈「文本区域被限宽」）** — 本库 `Callout.css` 用 `width: fit-content` + `min-width: 200px`，实测渲染态 widget 仅 **200px**（长 callout 351px），直接放文本域窄到不可用。修法：编辑期间给 **widget 本身**（不只是 `.callout`）挂 `mdrazor-callout-widget-editing`，CSS 对 widget 与 `.callout` 同时 `width: 100% !important; max-width: 100%`。实测编辑态 widget 与文本域均为 **900px**（= `.cm-content` 宽）。
+
+21. **表单控件在 `:hover` 下会被核心规则改底色（用户实测反馈「文本区域鼠标悬停导致背景色被覆盖」）** — Obsidian 核心有
+    `@media (hover:hover){ textarea:hover{ background-color: var(--background-modifier-form-field-hover); border-color: var(--background-modifier-border-hover) } }`，
+    其特异性 `(0,1,1)` **高于**裸类名 `.mdrazor-callout-editor-body` 的 `(0,1,0)`，只写基础态时鼠标一悬停就被换成表单字段底色。同类规则还有 `input[type='text']:hover`、`select:hover`（同样命中类型/元数据/折叠控件）。
+    修法（双保险）：① 选择器加 `.callout.mdrazor-callout-editing` 前缀把特异性提到 `(0,3,0)` 并逐一列出 `:hover/:active/:focus`；② 对面板自己的控件直接在 `background`/`border`/`box-shadow` 上加 `!important` —— **合成事件无法触发真实 `:hover`**（浏览器不把合成 mousemove 当作指针悬停），故不能靠实测验证，只能靠锁死声明消除不确定性。标题输入框当初侥幸没事，只因它的选择器本身就是 `(0,4,0)`。
+22. **callout 头部的完整语法是 `> [!type|metadata]+ title`** — `|metadata` 在方括号内、折叠标记 `+`/`-` 在方括号之后。Obsidian 自身**不解释** metadata，只写进 `data-callout-metadata` 供主题/片段选择器使用。故「居中」这类能力不是核心语法，而是片段约定：本库 `MCL Multi Column.css` 用 `[data-callout-metadata*="center"]{ text-align:center }` 实现，笔记里则在用 `[!note|notitle]`。**判据：`[!type|metadata]` 中 `|` 前是类型、后是元数据，重建源码时顺序不能颠倒**（实测写回 `>[!warning|notitle]- ddd` 正确）。
+23. **候选值要三个来源合并，只扫样式表会漏** — 首版只扫已加载样式表的 `data-callout` / `data-callout-metadata` 选择器：类型捞到 38 个（含本库自定义的 kanban/timeline/def），但**元数据捞到 0 个** —— 因为 `MCL Multi Column.css` 片段**并未启用**（未启用的片段不进入 `document.styleSheets`），而笔记里实际在用的 `notitle` 也没定义在任何已加载片段里。修法：合并三源 —— ① 内置类型列表；② 样式表扫描；③ **当前文档正文**里已出现的 `[!type|metadata]` 取值。改后元数据候选为 `caption / center / no-icon / notitle`。**通用教训：样式表扫描只能反映「已启用」的主题/片段，用户实际在用的语法还得从文档里捞。** 另注意跨域样式表读 `cssRules` 会抛错，须逐表 try/catch。缓存按 `css-change` 失效。
+
+24. **`data-callout` 是类型、`data-callout-metadata` 才是 `|` 之后的内容（用户报「自定义 Callout.css 没生效」的真因）** — 实测（本机 obsidian 1.13.7，`Obsidian教程.md` 的 `>[!note|notitle]`）：
+    ```
+    data-callout="note"      data-callout-metadata="notitle"
+    .callout[data-callout*="notitle"]            -> False   （用户原写法，不匹配）
+    .callout[data-callout-metadata*="notitle"]   -> True    （正确写法）
+    ```
+    Obsidian 把方括号里 `|` **之前**的放 `data-callout`、**之后**的放 `data-callout-metadata`。用户三条规则因此全不生效（`display_titleInner` 实测仍是 `block`）。另两条同类问题：① `[!tips]` 是**自定义**类型（内置只有 `tip` 单数），故 `.callout[data-callout="tip"]` 匹配不到 `>[!tips]`（本库 `测试.md` 用 `tips`、`鸿音.md` 用 `tip`，两者并存）；② 想按「空标题/无标题」隐藏标题行，要选 `data-callout-metadata` 而不是 `data-callout`。**判据：调试 callout 样式前先读元素上的 `data-callout` / `data-callout-metadata` 实际取值，别按源码里的 `[!x|y]` 直接推选择器。**
+25. **不预置任何元数据候选值（用户指出「原生不支持居中语法，删掉」）** — 首版预置了 `notitle / center / no-icon / caption`，但元数据完全是主题/片段的扩展点，**Obsidian 自身不存在「原生支持的元数据」**：`center` 依赖的 `MCL Multi Column.css` 片段并未启用（`appearance.json` 的 `enabledCssSnippets` 只有 `Highlight / TableStyle / Style-settings-style / Callout`），实测整个样式表里 `data-callout-metadata` 取值**一个都没有**。预置这类值会让用户以为选中即生效、实际什么都不做。改为**只从「当前文档实际在用」+「已加载样式表真正定义」两个来源取候选**（实测在 `Obsidian教程.md` 里正确得出 `["notitle"]`）。类型则仍保留内置列表（那是官方文档所列、真实存在的类型）。
+26. **片段可能整行隐藏 `.callout-title`，会把插在该行内的标题输入框一起藏掉** — 编辑面板的标题输入框寄生在官方 `.callout-title` 行内（见第 17 条），而片段可以写 `.callout[data-callout-metadata*="empty"] .callout-title{display:none}`。那样编辑时标题框不可见、无法改标题。修法：编辑态强制 `.callout.mdrazor-callout-editing > .callout-title{display:flex !important}` —— 只在编辑期间生效，其余时候完全尊重片段设置。实测编辑态 `titleRowDisplay` 为 `flex`。
+
+**实测进展（全部在运行中的 Obsidian 1.13.7 里验证）：** 首版**失败**（单击仍退回纯文本，根因即第 12 条）→ 修复后点本体通过；用户复测又发现右侧空白区仍退回（第 14 条）→ 修复；用户要求可选中文本（第 15 条）→ 修复；用户反馈编辑态外观（第 17~20 条）→ 按实测逐项对齐；用户反馈悬停底色 + 要求类型/元数据/折叠可编辑（第 21~23 条）→ 已实现并实测；用户要求删掉非原生的居中语法并排查自定义片段失效（第 24~26 条）→ 已删除预置元数据、实测定位到 `data-callout-metadata` 选择器问题、并加固编辑态标题行。当前实测：面板含 2 个带候选下拉的输入框 + 3 选项折叠框；类型候选 38 项（内置 + 本库片段自定义），元数据候选按文档实测得出 `["notitle"]`；写回 `>[!tips] ddd` → `>[!warning|notitle]- ddd` 正确且幂等。**编辑面板的粘贴补 `>` 与 IME 输入仍待人工复验** —— 合成事件触达不到受信任行为；悬停底色同理（第 21 条已改用 `!important` 锁死）。
+
+**本地迭代环境（重要）：** pjeby 的 hot-reload 只在**自身加载时**扫描 `.hotreload` 标记，事后补建不会被发现；**执行一次「Reload app without saving」**（或重启应用）让它重新扫描后，改 `main.js` 即 1s 内自动重载（已实测：探针 1s 内触发），可自服务迭代、无需再麻烦用户。注意 `.hotreload` 未被 `.gitignore` 覆盖，提交前需自行决定是否忽略。
+
+**诊断脚本追加进 `main.js` 的编码坑（曾导致插件加载失败，务必避免）：** 用 `Get-Content $f -Raw | Add-Content -Path main.js -Encoding UTF8` 追加**含中文**的脚本会炸 —— Windows PowerShell 5.1 的 `Get-Content` 默认按**系统 ANSI（本机 GBK）**读取，UTF-8 中文被误解码成乱码，其中某个字符被 JS 当作**行终止符**，使 `//` 注释提前结束、后半行变成代码，报 `SyntaxError: Unexpected token 'function'`。正确做法：`[System.IO.File]::ReadAllText($src, [Text.UTF8Encoding]::new($false))` 读、`[System.IO.File]::AppendAllText($dst, $body, [Text.UTF8Encoding]::new($false))` 写；**且追加后必须 `node --check main.js` 验证**（本次事故的直接原因就是漏了这一步）。临时诊断脚本一律写成**纯 ASCII** 最稳。
+
+**质量门：** `tsc -noEmit -skipLibCheck`、`eslint .`（0 error，1 条既有 warning：settings-tab 未实现 `getSettingDefinitions()`）、`node esbuild.config.mjs production` 全通过；已确认 `main.js` 含 `mdrazor-callout-editor` / `mdrazor-callout-editing` / `calloutEnhancer` 等新符号。
+
+### 热重载本插件 → 懒加载接管中的插件被无谓 flip（Glimpse 音乐面板被拆到右栏新分栏）
+
+**现象：** 用户报告「右侧边栏莫名其妙弹了个 notice，然后音乐标签页跑到右栏下半区」。18:00 前后的文件时间戳链条：`MDRazor/main.js` 18:00:07（开发期重建）→ `md-razor-position-cache.mirror.json` 18:00:08（本插件卸载时镜像落盘）→ `community-plugins.json` 18:00:12 → `workspace.json` 18:00:13 → `Glimpse/data.json` 18:00:17。Obsidian 进程自 10:40 起未重启（排除「应用重启丢布局」）。
+
+**根因（两条链）：**
+
+1. hot-reload 检测到 `main.js` 变化 → `disablePlugin('md-razor')` → 本插件 `onload` 重跑 → `lazyLoadManager.start()`。旧 `start()` 对「当前已加载」的懒加载条目一律延迟 3s `flipToLazy()`；Glimpse 是唯一 `delay > 0` 且未休眠的条目（`md-razor-settings.json`：`glimpse: { delay: 500 }`）→ `disablePluginAndSave('glimpse')`（写 `community-plugins.json`，Glimpse 因此从持久化启用集合中消失）→ `enablePlugin('glimpse')`。
+2. Glimpse 被卸载时 Obsidian 销毁其视图（该插件 `onunload` 明确不 `detachLeavesOfType`，清理交给 Obsidian）；重载后 `restoreLastPlayed()` → `ensureViewLoaded()` 发现音乐面板叶子已不存在 → 用 `getRightLeaf(true)` 重新挂载 —— 该参数是「新建标签组」而非「新建标签」，于是面板落在右栏新分栏里（Glimpse 侧同批修复）。
+
+**修复：** `start()` / `flipToLazy()` 增加 `enabledPlugins.has(id)` 判据（只转换持久化启用的插件）。
+
+**避坑记录：**
+
+1. **`enablePlugin` / `disablePlugin` 与 `*AndSave` 的区别是判据关键** — 前者不改 `app.plugins.enabledPlugins`（也不写 `community-plugins.json`），后者两者都改。hot-reload 走前者，因此本插件 `onunload` 的恢复守卫 `!enabledPlugins.has(SELF_PLUGIN_ID)` 为假 → `restore()` 不执行；而 `flipToLazy` 走 `disablePluginAndSave` → 接管插件被持久化停用。这正好解释了「`community-plugins.json` 里没有 `glimpse`，但它仍在运行」这一看似矛盾的状态。
+2. **`getRightLeaf` 的布尔参数是「新建标签组」** — Obsidian 1.13 运行时 `getSideLeaf(sideSplit, split)`：`split === true` 时向侧栏 `insertChild(-1, new WorkspaceTabs)` 再塞一个叶子（多切一个分栏）；`false` 时取 `children[0]` 后 `insertChild(-1, new WorkspaceLeaf)`（在首个标签组内新建空叶子，不触碰已有叶子、不 `setActiveLeaf`）。想「同组新增标签」必须传 `false`。
+3. **判定「本插件是否被重载」的可靠信号** — `md-razor-position-cache.mirror.json` 在卸载时立即落盘（见 `position-persistence`），重建 `main.js` 后 1s 内刷新即证明 hot-reload 生效；再配合 `community-plugins.json` / `workspace.json` 的 mtime 是否被触碰，即可判断这次重载有没有产生跨插件副作用。
+4. **本插件的懒加载会让接管插件处于「持久化停用 + 会话内运行」态** — 该状态下 hot-reload 不会重载它（`reload()` 开头 `if (!plugins.enabledPlugins.has(plugin)) return` 静默跳过），所以改 Glimpse 之类被接管插件的源码后，重建 `main.js` 不会在运行中的 Obsidian 里生效，需重启应用或先在第三方插件设置里启用该插件。
+
+---
+
+## 未发布 (2026-09-22)
+
+### callout 补偿的前提消失：片段侧 `inline-block` → `block + width: fit-content`
+
+**现象：** 用户反馈「鼠标按住当前行的**上半部分**向右平移，选区落到**上一行**相应位置」（与 2.6.0 修复的「下半部落到下一行」方向相反），在 MDRazor简介.md 稳定复现，且同一块内软换行的续行不受影响。排查确认主因在 Ethereal 主题的连续标题规则（见避坑记录 1、2）；复核 callout 补偿时又发现它的前提本身也是同一族结构性问题，且片段侧已有等价、几何原生的写法（见避坑记录 3~5）。
+
+**实现位置：** `styles.css`（注释改写；两条声明保留为兜底）
+
+**避坑记录：**
+
+1. **判据：逐行量「border-box 高度 vs 行进距」** — CM6 的行高表只累加每个行级子元素的 `getBoundingClientRect().height`（`measureVisibleLineHeights`，**不含 margin**），Y→行映射全靠它。所以任何让「盒高 ≠ 行进距」的写法都会让行高表与 DOM 位置产生**结构性**偏差，偏差带 = |盒高 − 行进距|，且 `view.measure()` / `requestMeasure()` 重测无效（重测读的还是同一个盒高）。方向判据：行高表偏低 → 每行**顶部**若干像素映射到**上一行**；行高表偏高 → 每行**底部**映射到**下一行**。块内软换行的续行不受影响（偏差只在元素顶部），这正是用户「同一块内换行不出问题」观察的由来。
+2. **本次主因：Ethereal 主题连续标题规则的负 margin** — `.cm-line.HyperMD-header + .cm-line:not(.HyperMD-header):has(>br:only-child) + .cm-line.HyperMD-header { padding-top: var(--p-spacing); margin-top: calc(var(--p-spacing) * -1) !important }`（`--p-spacing` = 1rem = 20px）。它让盒高 = 内容高 + 20、行进距 = 内容高 → 行高表从该行起整体低 20px。真实编辑器实测（Obsidian 1.13.7 / Chrome 150，MDRazor简介.md）：该行起每一行 delta = **−20.00px**；**396 个探测点中 205 个**（每行顶部 dy=2/6/10/14/18）`posAtCoords`（precise true/false 均然）落到上一行；同点 `elementFromPoint` 与 `caretPositionFromPoint` 都指向**本行** → 排除 DOM 重叠与 caret 异常，确认是行高表选块错行（列仍由 caret 提供，故表现为「上一行**相应位置**」）。该规则的**真实目的**是：H3 标识（`::before`，`bottom: 60%` 定位）要贴在高亮带上沿、不向下压到折叠箭头，同时把两标题的高亮带拉近到 16px。主题侧已改为等价写法——保留标题 `padding-top: var(--p-spacing)`，改由**压缩中间空行高度**收紧间距（`line-height: calc(var(--line-height-main, 1.8) * 1em - var(--p-spacing))`，36 → 16px，且必须带 `:has(+ .cm-line.HyperMD-header)` 以免误伤「标题+空行+正文」）：实测标题盒（271.74 / 54.77）、正文位置、后续行位置**逐像素不变**，各行 delta 全 0，301 个探测点 0 个真实错行（仅 3 个落在视口外 `.cm-gap` 占位处，其 map 与映射一致，属 CM6 虚拟化正常行为）。
+3. **补偿的哪一半在起作用（本次实测更正）** — 四组运行时注入对比（保留/去掉 `vertical-align` 与 `padding-bottom`）：**`vertical-align: bottom` 才是消除结构空隙的那一半**（widget 盒底对齐行盒底 → 行盒高 = widget 盒高 → 表一致；实测仅保留它、去掉 `padding-bottom` 时各行 delta 仍为 0）；`padding-bottom: 10px` 只是把原来那段 10px 空隙**留成视觉间距**（删掉仅少 10px 空白）。此前「两者都必需」的说法不准确：真正会出错的是**纯 inline-block 基线对齐**（只有片段、无任何补偿），即 2.6.0 记录的那个 10px bug。
+4. **`fit-content` 就是 inline-block 的 shrink-to-fit** — 片段侧新写法 `display: block + width: fit-content`：宽度自适应逐像素一致（实测长/短 callout 350.88px / 86.34px，与 `inline-block` 完全相同；高度同为 120px），而块级 = Obsidian 原生几何（widget 自身即一行，无匿名行盒与 strut descent）→ 行高表天然一致（实测各行 delta 全 0）。**收益：结构性正确性回到 CSS 侧，不再依赖本插件**；本插件两条声明因此降级为兜底（对块级无效/仅视觉间距，对旧片段仍是关键）。
+5. **`min-width: min(200px, 100%)` 的包含块陷阱** — 百分比的基准是**包含块**：加在**内层 `.callout`** 上时包含块是 widget 自身（自适应后仅 86px）→ `min(200px, 86px)` = 86px 自我抵消（实测短 callout 正是只有 86.34px）；**加在 widget（`.cm-callout`）上**时包含块是 `.cm-content`（整行宽）→ 取 200px 生效（实测短 callout 86.34 → **200.00px**，长 callout 350.88px 不变，几何仍全 0）。
+6. **`:has()` 的开销实测（为保留精确选择器提供依据）** — 匹配范围极小：渲染中的 `.cm-line` 33 个、其中空行 7 个、其后跟标题的 **4** 个（CM6 只渲染视口；文档共 119 行）。style recalc 基准（切换一个行类 + 强制重算，µs/轮，5 次中位数）：baseline 59.5、**+20 份**旧选择器 `:has(>br:only-child)` 49.0、**+20 份**新选择器 `:has(+ .cm-line.HyperMD-header)` 51.9、**+20 份**无 `:has` 对照 46.9 —— 20 份复制体的差异与样本抖动（±10µs）同量级且符号为负（首次运行吃 JIT 预热），即单份规则边际开销 ≪ 1µs/次重算。原因：最右端先被 `.cm-line`、`:not(.HyperMD-header)` 廉价条件筛掉，`>br:only-child` 只对 7 个空行求值、`+ 标题` 只对其中 4 个求值；`:has()` 的失效传播是**兄弟范围**（改一行的类只重算自身与相邻兄弟），不是全文档。结论：值得为精度保留该选择器。
+7. **验证方式（可复用）** — 把诊断脚本追加到 `main.js` 末尾（不改 `src/`），hot-reload 会在 1~2 秒内重载插件，随后把「逐行几何 + `posAtCoords` 落点 + `elementAtHeight`/`lineBlockAtHeight` 对照」写成 JSON 到库内；测完用原始 `main.js` 覆盖即可。两个坑：① 改主题后必须**强制重载主题**再测（`app.customCss.setTheme(app.customCss.theme)` + `requestMeasure()`），否则量到的是旧几何；② 探测点若落在视口外，`elementFromPoint`/caret 返回空、`posAtCoords(precise)` 返回 null，属 `.cm-gap` 虚拟化占位，不要当成错行。
+
 ## 2.6.4 (2026-09-16)
 
 ### 符号边界提示：弹框内 `|` 与光标对齐（CM6 的定位机制）

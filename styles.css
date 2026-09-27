@@ -658,12 +658,19 @@ div.nav-folder-title {
      鼠标正下方的 .cm-line 挂显式标记类——合成器平滑滚动期间 :hover 不
      逐帧重算、高亮会滞后，显式标记让高亮逐帧跟随内容。
    样式参考 Custom.css「行高亮跟随鼠标」：半透明主题色背景 + 圆角 +
-   20px 外扩阴影 + clip-path 回收遮罩。变量名沿用 Custom.css 的
-   --activeline-background（未定义时回退为等价色 hsla(accent,0.05)）。 */
+   22px 外扩阴影 + clip-path 回收遮罩。变量名沿用 Custom.css 的
+   --activeline-background（未定义时回退为等价色 hsla(accent,0.05)）。
+   代码块不参与高亮（:not(...) 排除；JS 侧 isCodeBlockHit 同步跳过）：
+   - .HyperMD-codeblock：围栏代码块的行（含首尾 ``` 行）。代码块自身已有
+     底色，叠加行高亮会盖掉语法高亮底色、块的左右边界也糊成一团；
+   - :has(.cm-preview-code-block)：Live Preview 中未激活的代码块被整体替换
+     成一个块级 widget，该 widget 是 .cm-content 的直接子级、通常落在
+     .cm-line 之外（:hover 本就命中不到）。此条为防御：万一某版本把它放进
+     某行内，整块悬停也不会亮。 */
 body.mdrazor-mouse-moving .cm-fat-cursor .CodeMirror-linebackground:hover,
 body.mdrazor-mouse-moving .CodeMirror-linebackground:hover,
-body.mdrazor-mouse-moving .cm-line:hover,
-body.mdrazor-mouse-moving .mdrazor-line-highlight {
+body.mdrazor-mouse-moving .cm-line:hover:not(.HyperMD-codeblock):not(:has(.cm-preview-code-block)),
+body.mdrazor-mouse-moving .mdrazor-line-highlight:not(.HyperMD-codeblock):not(:has(.cm-preview-code-block)) {
 	background-color: var(--activeline-background, hsla(var(--color-accent-hsl), 0.05)) !important;
 	border-radius: 8px;
 	box-shadow: 0 0 0 22px var(--activeline-background, hsla(var(--color-accent-hsl), 0.05));
@@ -677,10 +684,12 @@ body.mdrazor-mouse-moving .mdrazor-line-highlight {
    原因：.cm-content 是 contenteditable，UA 对 cursor:auto 在可编辑文本上
    解析为 I-beam(text)；若把 cursor:default 只挂在移动态类上，鼠标在行上
    静止 300ms（空闲超时摘除移动类）后光标就会回到 text——这在行间缝隙处
-   最显眼。用「功能开启」类解耦后静止悬停也保持 default。 */
+   最显眼。用「功能开启」类解耦后静止悬停也保持 default。
+   代码块除外（与上面的高亮排除同一套判据）：代码块不参与本功能，光标
+   也保持原生——悬停在代码块上仍是 I-beam，不套箭头。 */
 body.mdrazor-mouse-line-highlight-enabled .cm-fat-cursor .CodeMirror-linebackground:hover,
 body.mdrazor-mouse-line-highlight-enabled .CodeMirror-linebackground:hover,
-body.mdrazor-mouse-line-highlight-enabled .cm-line:hover {
+body.mdrazor-mouse-line-highlight-enabled .cm-line:hover:not(.HyperMD-codeblock):not(:has(.cm-preview-code-block)) {
 	cursor: default;
 }
 
@@ -692,6 +701,18 @@ body.mdrazor-mouse-line-highlight-enabled .cm-line:hover {
 body.mdrazor-mouse-moving .markdown-source-view.mod-cm6,
 body.mdrazor-mouse-moving .markdown-source-view.mod-cm6 * {
 	cursor: default !important;
+}
+
+/* 代码块内恢复原生光标：上面那条加固用的是 `*` 通配，会连代码块一起强制
+   成箭头，而本功能对代码块应当「完全不存在」。故在它之后用更高特异性
+   （多一个类，均为 !important）把代码块整棵子树的光标还原为 auto——
+   .cm-line 在 contenteditable 里，auto 即 I-beam；未激活代码块的块级
+   widget 不在 contenteditable 内，auto 即它原本的光标。 */
+body.mdrazor-mouse-moving .markdown-source-view.mod-cm6 .HyperMD-codeblock,
+body.mdrazor-mouse-moving .markdown-source-view.mod-cm6 .HyperMD-codeblock *,
+body.mdrazor-mouse-moving .markdown-source-view.mod-cm6 .cm-preview-code-block,
+body.mdrazor-mouse-moving .markdown-source-view.mod-cm6 .cm-preview-code-block * {
+	cursor: auto !important;
 }
 
 /* ── 当前行高亮 ──
@@ -722,20 +743,310 @@ body.mdrazor-current-line-highlight .markdown-source-view.mod-cm6 .cm-editor:not
 }
 
 /* ────────────────────────────────────────────────────────────────
-   callout 块 widget 行盒空隙修复（点击/拖拽错行）
+   callout 块 widget 行盒空隙兜底（点击/拖拽错行）
    ────────────────────────────────────────────────────────────────
-   实时预览中 Obsidian 把 callout 渲染为块级 widget
-   （.cm-embed-block.cm-callout，display: inline-block，基线对齐）。
-   inline-block 参与匿名行盒：行盒在其自身盒底之下还会挂出约半个
-   行高的 strut descent 空隙（本主题实测 10px）。CM6 行高表只测量
-   widget 自身的 border box——于是 callout 之后的每一行在 DOM 中的
-   实际位置都比行高表低 10px。后果：点击这些行下半部（底部 10px
-   带）时 posAtCoords 映射到下一行，按住向右拖拽时选区整体落到
-   下一行同一列（callout 之前的行不受影响）。
-   修复：widget 盒底对齐所在行盒底（vertical-align: bottom），把
-   行盒空隙转成 widget 自身的透明 padding —— 视觉排版逐像素不变，
-   行高表与 DOM 几何完全一致。 */
+   背景：Callout.css 曾用 `display: inline-block` 实现 callout 宽度
+   自适应。inline-block 是行内级：它以基线对齐参与匿名行盒，行盒在
+   widget 盒底之下还会挂出约半个行高的 strut descent 空隙（实测
+   10px）；而 CM6 行高表只测量 widget 自身的 border box → callout
+   之后每一行的 DOM 位置都比行高表低 10px → 点击这些行下半部（底部
+   10px 带）时 posAtCoords 映射到下一行，按住拖拽时选区整体落到下一
+   行同一列（callout 之前的行不受影响）。
+   现状（2026-09-22 起）：片段侧已改用 `display: block + width:
+   fit-content`（fit-content 即 inline-block 的 shrink-to-fit 公式，
+   宽度自适应逐像素一致：实测长/短 callout 宽度 350.88px / 86.34px
+   与改前相同，高度同为 120px），widget 回到块级 = Obsidian 原生几何
+   （widget 自身即一行，无匿名行盒与 strut descent），行高表天然一致
+   （实测各行 delta = 0）——**结构性修复已在片段侧完成**。
+   本规则保留为兜底，两种情况都安全：
+   - widget 为块级（现状）：vertical-align 对块级元素无效（无害）；
+     padding-bottom 只负责把原来那段 10px 空隙留成视觉间距（删掉仅
+     少 10px 空白，几何不变）。
+   - widget 仍为 inline-block（旧片段 / 其他主题）：vertical-align:
+     bottom 让 widget 盒底对齐行盒底、空隙消失（实测此时仅去掉
+     padding-bottom，各行 delta 仍为 0），padding-bottom 则把空隙
+     转成 widget 自身的透明 padding —— 视觉逐像素不变且行高表与
+     DOM 几何完全一致。 */
 .markdown-source-view.mod-cm6 .cm-embed-block.cm-callout {
 	vertical-align: bottom;
 	padding-bottom: 10px;
+	/* Callout 增强：允许在渲染后的 callout 内用鼠标拖选文本。
+	   widget 内的文本默认可能被 CM6/主题设为不可选；user-select 可继承，
+	   故只写在 widget 上即可覆盖其后代。实测：在 widget 内建立 DOM 选区
+	   不会让 Obsidian 撤掉 widget（CM6 不同步落在 widget 内的选区），
+	   因此选中文本与「保持渲染」可以并存。 */
+	-webkit-user-select: text;
+	user-select: text;
 }
+
+/* ────────────────────────────────────────────────────────────────
+   Callout 增强：就地编辑面板
+   ────────────────────────────────────────────────────────────────
+   实时预览的 callout 是 Obsidian 自己的块级 replace widget，渲染态下
+   其 `>` 源码被整体替换掉，无法就地编辑。本插件的做法是**尽量不重画**：
+   - 官方 `.callout` 容器原样保留 → 边框 / 底色 / 圆角 / 配色 / 混合模式
+     全部照旧；
+   - 标题输入框**插进官方 `.callout-title` 行内**，只隐藏官方
+     `.callout-title-inner` 的文字 → 官方图标、整行 gap/padding、
+     `color: rgb(var(--callout-color))`、`font-size: var(--callout-title-size)`
+     全部原样继承，编辑态标题行与渲染态同源；
+   - 正文文本域复刻官方 `.callout-content` 的内边距与背景。
+   注意不要用 `display: none` 隐藏整个 `.callout-title`（那会连图标和
+   配色一起丢掉，编辑态就只剩背景像 callout —— 这是首版的错误）。 */
+
+/* 只隐藏官方标题**文字**，标题行与图标保留 */
+.callout.mdrazor-callout-editing > .callout-title > .callout-title-inner {
+	display: none;
+}
+
+/* 编辑期间强制显示官方标题行：片段可以按类型/元数据整行隐藏标题
+   （如 `.callout[data-callout-metadata*="empty"] .callout-title{display:none}`），
+   那会把本插件插在该行内的标题输入框一起藏掉，导致标题无法编辑。
+   编辑态需要看到并改标题，故这里强制显示（其余时候完全尊重片段设置）。 */
+.callout.mdrazor-callout-editing > .callout-title {
+	display: flex !important;
+}
+
+/* 只隐藏官方正文区，其内边距/背景由下方文本域复刻 */
+.callout.mdrazor-callout-editing > .callout-content {
+	display: none;
+}
+
+/* 编辑期间解除主题对 widget 的限宽。
+   本库 Callout.css 用 `width: fit-content` + `min-width: 200px`，
+   渲染态 widget 仅 200px 宽，直接放文本域会窄到不可用。 */
+.markdown-source-view.mod-cm6 .cm-embed-block.cm-callout.mdrazor-callout-widget-editing,
+.markdown-source-view.mod-cm6 .cm-embed-block.cm-callout.mdrazor-callout-widget-editing > .callout {
+	width: 100% !important;
+	max-width: 100%;
+}
+
+/* 编辑态强制解除中间各层的绘制裁剪：候选下拉是面板内唯一的浮层，会盖到
+   正文文本域上、短面板时还会伸出面板底边。两类裁剪都要解 ——
+   1) overflow 裁剪：核心与本库 Callout.css 片段都给 `.callout` 设了
+      `overflow: hidden`，核心的 `.cm-embed-block:hover` 也有（app.css 实证）；
+   2) contain: paint 裁剪（overflow 解不掉）：核心对块级 widget 上了
+      `.cm-content > [contenteditable=false] { contain: paint !important }`
+      （app.css 实证），所有后代被裁在 widget 盒内 —— 下拉被「关在 callout
+      显示域里」的根因（用户实测截图），必须 contain: none 才能解除。
+   仅编辑态生效：面板内容全部在文档流内本就没有溢出，无副作用。 */
+.markdown-source-view.mod-cm6 .cm-embed-block.cm-callout.mdrazor-callout-widget-editing,
+.markdown-source-view.mod-cm6
+	.cm-embed-block.cm-callout.mdrazor-callout-widget-editing
+	.markdown-rendered,
+.callout.mdrazor-callout-editing {
+	overflow: visible !important;
+}
+
+/* 特异性 (0,6,0)+!important 压过核心 (0,4,0)+!important 的 contain: paint。
+   contain: none 之后必须补 isolation: isolate：渲染态 widget 的 paint 隔离
+   顺带中和了 callout 的 mix-blend-mode（本库主题 Ethereal 经
+   --callout-blend-mode → --highlight-mix-blend-mode 传入 darken），只解除
+   contain 的话编辑态配色会因 darken 突然作用于真实页面背景而突变 ——
+   isolation 提供等价的混合隔离但不裁剪绘制。z-index: 1 让伸出 widget 的
+   下拉盖过排在后面的兄弟 embed-block（核心给它们设了 position: relative，
+   否则按 DOM 序绘制在下拉之上）。 */
+.markdown-source-view.mod-cm6 .cm-content > .cm-embed-block.cm-callout.mdrazor-callout-widget-editing {
+	contain: none !important;
+	isolation: isolate;
+	z-index: 1;
+}
+
+/* 标题输入框：在官方 `.callout-title` 行内接管标题文字的位置。
+   颜色 / 字号 / 行高 / gap 全部从官方标题行继承，故无需重复声明。 */
+.callout.mdrazor-callout-editing > .callout-title > .mdrazor-callout-editor-title-input {
+	flex: 1 1 auto;
+	min-width: 0;
+	/* 与官方标题文字同高：行高从官方标题行继承，高度按字号定死，
+	   避免 input 的固有高度把标题行撑高（实测渲染态 34px → 编辑态 38px）。
+	   下划线用 inset box-shadow 而非 border-bottom —— 不参与布局。 */
+	height: 1.3em;
+	font-family: inherit;
+	font-size: inherit;
+	line-height: inherit;
+	font-weight: var(--callout-title-weight, var(--font-semibold));
+	color: inherit;
+	background: transparent !important;
+	border: none !important;
+	border-radius: 0;
+	padding: 0;
+	margin: 0;
+	box-shadow: inset 0 -1px 0 0 color-mix(in srgb, currentColor 35%, transparent) !important;
+}
+
+.callout.mdrazor-callout-editing > .callout-title > .mdrazor-callout-editor-title-input:focus {
+	outline: none;
+	box-shadow: inset 0 -2px 0 0 currentColor;
+}
+
+.mdrazor-callout-editor {
+	display: flex;
+	flex-direction: column;
+}
+
+/* 头部属性行：类型 / 元数据 / 折叠 */
+.mdrazor-callout-editor-meta {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: var(--size-4-2);
+	padding: 0 var(--mdrazor-callout-content-padding, 0 var(--size-4-4)) var(--size-4-1);
+}
+
+.mdrazor-callout-editor-field {
+	display: flex;
+	align-items: center;
+	gap: var(--size-4-1);
+	min-width: 0;
+	/* 候选下拉（.mdrazor-callout-editor-suggest）的定位锚点 */
+	position: relative;
+}
+
+/* 自定义候选下拉（替代原生 datalist 弹层）。
+   原生弹层由浏览器绘制：尺寸不可控（类型候选 70 项直接超出屏幕），且按
+   屏幕坐标定位、编辑器滚动时不跟随输入框（用户实测两问题俱在）。这里
+   绝对定位挂在字段内，与编辑器内容同处一个滚动上下文 —— 滚动跟随由
+   结构保证；限高内部滚动，overscroll-behavior 防止滚到底后链条滚到编辑器。 */
+.mdrazor-callout-editor-suggest {
+	display: none;
+	position: absolute;
+	top: calc(100% + var(--size-4-1));
+	left: 0;
+	z-index: var(--layer-popover, 30);
+	box-sizing: border-box;
+	min-width: 100%;
+	width: max-content;
+	max-width: 20rem;
+	max-height: min(16rem, 40vh);
+	overflow-y: auto;
+	overscroll-behavior: contain;
+	padding: var(--size-4-1) 0;
+	background: var(--background-primary);
+	border: 1px solid var(--background-modifier-border);
+	border-radius: var(--radius-s);
+	box-shadow: var(--shadow-s);
+}
+
+.mdrazor-callout-editor-suggest.is-open {
+	display: block;
+}
+
+/* 面板贴近视口底部时向上翻（JS 展开时按剩余空间决定），避免被裁 */
+.mdrazor-callout-editor-suggest.is-up {
+	top: auto;
+	bottom: calc(100% + var(--size-4-1));
+}
+
+.mdrazor-callout-editor-suggest-item {
+	padding: 2px 10px;
+	font-size: var(--font-ui-smaller);
+	color: var(--text-normal);
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	cursor: var(--cursor);
+}
+
+.mdrazor-callout-editor-suggest-item:hover,
+.mdrazor-callout-editor-suggest-item.is-active {
+	background: var(--background-modifier-hover);
+}
+
+.mdrazor-callout-editor-field-label {
+	flex-shrink: 0;
+	font-size: var(--font-ui-smaller);
+	color: var(--text-muted);
+	white-space: nowrap;
+}
+
+/* 类型 / 元数据 / 折叠控件同样要压过核心的
+   `input[type='text']:hover` / `select:hover`（表单字段悬停底色），
+   故同样带 `.callout.mdrazor-callout-editing` 前缀并列出伪类态。 */
+.callout.mdrazor-callout-editing .mdrazor-callout-editor-field-input,
+.callout.mdrazor-callout-editing .mdrazor-callout-editor-field-input:hover,
+.callout.mdrazor-callout-editing .mdrazor-callout-editor-field-input:active,
+.callout.mdrazor-callout-editing .mdrazor-callout-editor-field-input:focus,
+.callout.mdrazor-callout-editing .mdrazor-callout-editor-fold,
+.callout.mdrazor-callout-editing .mdrazor-callout-editor-fold:hover,
+.callout.mdrazor-callout-editing .mdrazor-callout-editor-fold:active,
+.callout.mdrazor-callout-editing .mdrazor-callout-editor-fold:focus {
+	font-family: inherit;
+	font-size: var(--font-ui-smaller);
+	height: auto;
+	padding: 2px 6px;
+	color: var(--text-normal);
+	background: var(--background-primary) !important;
+	border: 1px solid var(--background-modifier-border) !important;
+	border-radius: var(--radius-s);
+	box-shadow: none !important;
+	outline: none;
+}
+
+.callout.mdrazor-callout-editing .mdrazor-callout-editor-field-input {
+	width: 10em;
+	min-width: 0;
+}
+
+/* 正文文本域：复刻官方 `.callout-content` 的内边距与背景（由 JS 读实测值下发），
+   并占满宽度（widget 已在编辑态解除限宽）。
+
+   必须显式覆盖 :hover / :active / :focus 三种态：Obsidian 核心有
+   `@media (hover:hover) textarea:hover { background-color:
+   var(--background-modifier-form-field-hover); border-color: ... }`，
+   其特异性 (0,1,1) 高于裸类名 (0,1,0) —— 只写基础态会在鼠标悬停时
+   被换成表单字段的悬停底色（实测反馈「悬停导致背景色被覆盖」）。
+   这里用 `.callout.mdrazor-callout-editing` 前缀把特异性提到 (0,3,0) 压过它，
+   并逐一列出伪类态，确保任何状态下都是 callout 的正文底色。 */
+.callout.mdrazor-callout-editing .mdrazor-callout-editor-body,
+.callout.mdrazor-callout-editing .mdrazor-callout-editor-body:hover,
+.callout.mdrazor-callout-editing .mdrazor-callout-editor-body:active,
+.callout.mdrazor-callout-editing .mdrazor-callout-editor-body:focus {
+	display: block;
+	box-sizing: border-box;
+	width: 100%;
+	min-height: 5em;
+	/* 高度由 JS 随内容自适应（callout-enhancer.ts 的 fitBodyHeight：
+	   input/粘贴/宽度变化后按 scrollHeight 重设），resize 手柄拖出的高度
+	   在下一次输入时就会被重设，两者互相矛盾，故去掉手柄。 */
+	resize: none;
+	font-family: var(--font-text);
+	font-size: var(--font-text-size);
+	line-height: var(--line-height-normal);
+	color: var(--text-normal);
+	/* !important 是刻意的：核心的 `textarea:hover` 以及主题各自的表单悬停规则
+	   都会改 background/border，而合成事件无法验证真实 :hover 状态。面板是
+	   本插件自己的 UI，锁死这三项比依赖特异性推算更可靠。 */
+	background: var(--mdrazor-callout-content-bg, var(--callout-content-background, transparent)) !important;
+	border: none !important;
+	border-radius: 0;
+	padding: var(--mdrazor-callout-content-padding, var(--size-4-2) var(--size-4-4));
+	margin: 0;
+	box-shadow: none !important;
+	outline: none;
+	transition: none;
+}
+
+/* 底部操作区：完成按钮右对齐，与正文同内边距 */
+.mdrazor-callout-editor-actions {
+	display: flex;
+	justify-content: flex-end;
+	gap: var(--size-4-2);
+	padding: 0 var(--size-4-2) var(--size-4-2);
+}
+
+.mdrazor-callout-editor-done {
+	font-size: var(--font-ui-smaller);
+	padding: 2px 10px;
+	border-radius: var(--radius-s);
+	background: var(--interactive-accent);
+	color: var(--text-on-accent);
+	border: none;
+	box-shadow: none;
+	cursor: var(--cursor);
+}
+
+.mdrazor-callout-editor-done:hover {
+	background: var(--interactive-accent-hover);
+}
+
+

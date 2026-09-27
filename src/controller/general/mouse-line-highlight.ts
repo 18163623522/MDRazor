@@ -2,6 +2,11 @@
  * MDRazor — 通用：鼠标/滚轮活动时行高亮（Controller）
  *
  * 需求：鼠标移动或滚轮滚动时高亮光标所在行，停止活动后高亮自动取消。
+ * 代码块不参与高亮：围栏代码块行（.HyperMD-codeblock）自身已有底色，叠加
+ * 行高亮会盖掉语法高亮；Live Preview 中未激活的代码块被整体替换成块级
+ * widget（不在任何 .cm-line 内），指针落在它上面时既不回退中心也不高亮。
+ * 判定见 isCodeBlockHit；styles.css 中以同款 :not(...) 并列排除——鼠标物理
+ * 移动那一路走 :hover，由 CSS 生效，不经过 JS。
  *
  * 纯 CSS 的 `:hover` 只能感知「鼠标此刻在元素上」，无法区分「活动中」与
  * 「静止」，因此必须由 JS 提供「活动中」状态：
@@ -105,21 +110,40 @@ function editorCenter(): { x: number; y: number } | null {
 	return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
 }
 
-/** 坐标处的行元素（.cm-line 或 CodeMirror-linebackground）；非行元素返回 null */
-function locateLineAt(point: { x: number; y: number }): HTMLElement | null {
-	const hit = activeDocument.elementFromPoint(point.x, point.y);
+/** 命中元素是否属于代码块（不参与鼠标行高亮）：
+ *  - .HyperMD-codeblock：围栏代码块的行（含首尾 ``` 行）；
+ *  - .cm-preview-code-block：Live Preview 中未激活的代码块被整体替换成一个
+ *    块级 widget，该 widget 是 .cm-content 的直接子级、不在 .cm-line 内
+ *    （closest 也找不到行）。它本就不该高亮，更要紧的是必须与「指针不在
+ *    行上」区分开，否则会走到「回退编辑器中心」那条路上去。
+ *  与 styles.css 的 :not(...) 排除规则保持一致。 */
+function isCodeBlockHit(hit: Element): boolean {
+	return hit.closest('.HyperMD-codeblock, .cm-preview-code-block') !== null;
+}
+
+/** 命中元素所在的行（.cm-line 或 CodeMirror-linebackground）；非行元素返回 null */
+function lineOf(hit: Element | null): HTMLElement | null {
 	return hit?.closest<HTMLElement>('.cm-line, .CodeMirror-linebackground') ?? null;
 }
 
 /** 定位鼠标正下方的行：优先指针坐标；指针不在行上（如滚动条拖拽）或未
- *  记录过时回退编辑器中心的行，保证滚动高亮不中断 */
+ *  记录过时回退编辑器中心的行，保证滚动高亮不中断。
+ *  但指针明确落在代码块上时返回 null 且**不回退中心**——代码块不参与高亮，
+ *  回退还会把高亮跳到编辑器正中那一行，与鼠标位置毫无关系。 */
 function findLineUnderPointer(): HTMLElement | null {
 	if (lastPointer !== null) {
-		const line = locateLineAt(lastPointer);
-		if (line !== null) return line;
+		const hit = activeDocument.elementFromPoint(lastPointer.x, lastPointer.y);
+		if (hit !== null) {
+			if (isCodeBlockHit(hit)) return null;
+			const line = lineOf(hit);
+			if (line !== null) return line;
+		}
 	}
 	const center = editorCenter();
-	return center === null ? null : locateLineAt(center);
+	if (center === null) return null;
+	const hit = activeDocument.elementFromPoint(center.x, center.y);
+	if (hit === null || isCodeBlockHit(hit)) return null;
+	return lineOf(hit);
 }
 
 /** 滚动帧刷新：定位鼠标下的行并与当前标记比较，变化才写 DOM */
