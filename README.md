@@ -27,7 +27,7 @@ MDRazor is an Obsidian plugin dedicated to honing your Markdown editing experien
 **中文**
 
 - **编辑体验** — 隐藏格式标记 · 空格可视化 · 符号边界提示（框内 `|` 与光标对齐 · 夜间模式弹框可见）· 鼠标/滚轮移动时行高亮 · 当前行高亮 · 打字机模式 · 点击同步（点击/拖拽选错行根治，含 mouseup 最终纠错）· callout 之后行点击/拖拽错位根治（块 widget 行盒空隙并入测量）· 编辑器测量守护（行高表陈旧点击偏移根治）· Callout 增强（单击保持渲染 · 就地编辑面板 · 正文自适应增高 · 候选下拉）· 行内代码双击复制 · 光标与滚轴位置持久化
-- **列表与结构** — 列表一体化（列一体化 / 勾选框一体化 / 退格提升层级）· 回车软换行 · 选项聚焦 · 折叠同级列表/标题 · 活动行列表符号折叠 · 折叠项方向键穿越 · 目录聚焦 · 目录文件计数 · 批量删除空行（Markdown 感知）
+- **列表与结构** — 列表一体化（列一体化 / 勾选框一体化 / ← 选中勾选框字符 / 退格提升层级）· 回车软换行（任意单字符勾选框继承）· 选项聚焦 · 折叠同级列表/标题 · 活动行列表符号折叠 · 折叠项方向键穿越 · 目录聚焦 · 目录文件计数 · 批量删除空行（Markdown 感知）
 - **标签页与导航** — 默认在新标签页打开 · 内链/书签新标签页 · 垂直标签页 · 自动保存工作区
 - **命令与外观** — 自定义命令 · 隐藏命令 · 状态栏命令 · 右键菜单命令 · 图标选择 · 拖拽排序 · 左功能区管理 · 自动清理失联图片
 - **数据与性能** — 懒加载 · 配置休眠（停用不丢延迟）· 启动耗时统计 · 全局加载队列 · 数据镜像兜底 · 中英文 i18n
@@ -35,7 +35,7 @@ MDRazor is an Obsidian plugin dedicated to honing your Markdown editing experien
 **English**
 
 - **Editing experience** — Hidden formatting marks · Whitespace visualization · Symbol boundary hint (tooltip `|` aligned with the caret · visible in dark mode) · Mouse/wheel line highlight · Current line highlight · Typewriter mode · Click sync (click/drag misplacement cure, incl. mouseup final correction) · Callout-following-row offset cure (block-widget line-box gap folded into measurement) · Measure guard (stale height-map click-offset cure) · Callout enhancement (single-click keeps rendering · in-place editor · auto-growing body · suggestion dropdown) · Inline code double-click copy · Cursor & scroll position persistence
-- **Lists & structure** — List integration (list marks / checkboxes / backspace level promotion) · Enter soft break · Focus list item · Fold sibling lists/headings · Fold via list bullet on the active line · Arrow-key traversal of folded items · Folder focus · Folder file count · Markdown-aware empty-line cleanup
+- **Lists & structure** — List integration (list marks / checkboxes / ← selects checkbox character / backspace level promotion) · Enter soft break (any single-character checkbox inheritance) · Focus list item · Fold sibling lists/headings · Fold via list bullet on the active line · Arrow-key traversal of folded items · Folder focus · Folder file count · Markdown-aware empty-line cleanup
 - **Tabs & navigation** — Open in new tab by default · Wikilinks and bookmarks in new tabs · Vertical tabs · Workspace autosave
 - **Commands & appearance** — Custom commands · Hidden commands · Status-bar commands · Context-menu commands · Icon picker · Drag-and-drop ordering · Left-ribbon management · Orphan image cleanup
 - **Data & performance** — Lazy loading · Dormant configs (delays survive disabling) · Startup timing stats · Global load queue · Data mirror fallback · English/Chinese i18n
@@ -112,13 +112,13 @@ MDRazor is an Obsidian plugin dedicated to honing your Markdown editing experien
 
 - **列一体化** — 将列表标记（`-`、`1.`、`*`）视为原子单元：光标定位跳过标记（点击 / Home / 方向键 / 程序化移动均不驻留标记区），退格键一次删除整个标记。光标永不驻留列表标记区，列表符号（圆点 / 自定义符号 / 折叠箭头）在光标所在行始终显示，不会退化为原始 `- ` 标记。编辑体验更接近所见即所得。
 
-- **勾选框一体化** — 将任务项标记 `- [ ]`（含 `[ ]` 内的状态字符）视为原子单元：光标定位跳过、退格键一次整体删除标记；与「列一体化」同时开启时合并为一个整体区间（`- [ ]` 视为一个整体），只开勾选框一体化时 `[ ]` 单独作为一个原子单元。勾选框样式（复选框 widget）在光标所在行始终显示，不会退化为原始 `[ ]`；点击勾选框切换任务状态不受影响。
+- **勾选框一体化** — 将任务项标记 `- [ ]`（含 `[ ]` 内的状态字符）视为原子单元：光标定位跳过、退格键一次整体删除标记；与「列一体化」同时开启时合并为一个整体区间（`- [ ]` 视为一个整体），只开勾选框一体化时 `[ ]` 单独作为一个原子单元。勾选框样式（复选框 widget）在光标所在行始终显示，不会退化为原始 `[ ]`；点击勾选框切换任务状态不受影响。**← 选中勾选框字符**：光标位于内容起点（`- [ ] |`）时按 ← 直接选中 `[]` 内的状态字符——选中期间复选框临时退回原文渲染（状态字符高亮，列表符号不受影响），键入任意字符即替换并恢复复选框渲染、光标自动复位回内容起点（`- [键入值] |`）；← / → 再按取消选区回右边界。配合 Task Collector 等自定义标记插件可全程键盘改写完成状态；实时预览与源码模式均可用。
 
 - **退格提升层级** — 光标位于一体化列表标记的右边界（`- |` 或 `- [ ] |`，即列一体化把光标推到的内容起点）时按 Backspace，不再整体删除标记，改为渐进退链：任务项先剥离勾选框（`- [ ] |` → `- |`，层级、缩进与内容不动）；再逐级提升——每按一次退格提升一级，整行缩进替换为父级缩进，内容保留、子树随行（其后的原同级项会因缩进关系成为其子项，与 Obsidian 原生 Shift+Tab 的行级语义一致），含内容的项同样提升；无更浅缩进的父级列表行（视为一级）时直接删除列表格式——移除行首缩进与标记，内容保留。有序任务项剥离勾选框后保留有序标记（`1. [ ] ` → `1. `）。需配合「列一体化」开启；「勾选框一体化」关闭时任务项无合并边界，退格链从 `- |` 位置才开始生效。
 
 - **光标行列表符号折叠** — 实时预览中光标所在列表行（活动行）原本悬停列表符号不显示折叠箭头、点击列表符号也无法折叠/展开列表（Obsidian 原生在活动行禁用的机制）；开启后恢复与非活动行一致的折叠行为：悬停箭头正常显现、点击列表符号照常折叠/展开。任务行沿用原生规则。设置变更即时生效，无需重启。
 
-- **回车软换行** — 在列表项内按 Enter 仅插入换行、缩进及两个空格（等效原生 `Shift+Enter` 行为），不新建列表项。需要新建列表项时，再按一次 Enter 即可，也就是连续回车新建列表项。适合多行列表项。任务项的勾选框继承：所属列表项带勾选框（`- [ ] ` / `- [x] `）时，连续回车新建的列表项同样以勾选框起头（默认未勾选，与 Obsidian 原生行为一致）。
+- **回车软换行** — 在列表项内按 Enter 仅插入换行、缩进及两个空格（等效原生 `Shift+Enter` 行为），不新建列表项。需要新建列表项时，再按一次 Enter 即可，也就是连续回车新建列表项。适合多行列表项。任务项的勾选框继承：所属列表项带勾选框时，连续回车新建的列表项同样以勾选框起头（默认未勾选，与 Obsidian 原生行为一致）。继承判定对齐 Obsidian 原生任务行规则：方括号内**任意单字符**均算勾选框（`- [ ] `、`- [x] `、Minimal 的 `- [-] `、Tasks 的 `- [/] ` 等），且 `]` 后须紧跟空格（无空格写法原生本就不渲染勾选框）。
 
 - **选项聚焦** — 光标移入列表项时，自动折叠所有非直属内容（兄弟、父兄弟等），仅展开焦点链（当前项、其祖先、及其子孙）。深度嵌套列表导航不再眼花缭乱。鼠标未弹起时不触发折叠，避免拖选过程中闪烁。
 
@@ -279,10 +279,10 @@ Hide Markdown mark symbols, revealed automatically as the cursor passes. Cleaner
 #### 📝 List Enhancement
 
 - **List Integration** — the list marker (`-`, `1.`, `*` plus its trailing space) becomes an atomic unit: the cursor (click / Home / arrow keys / programmatic moves) never rests inside it, Backspace removes the whole marker at once, and bullets/fold arrows keep rendering on the active line.
-- **Checkbox Integration** — same treatment for the task marker: merged with the list marker into one atomic range (`- [ ]` as a whole) when both toggles are on; the checkbox widget never degrades to raw `[ ]` on the active line, and clicking the checkbox still toggles the task.
+- **Checkbox Integration** — same treatment for the task marker: merged with the list marker into one atomic range (`- [ ]` as a whole) when both toggles are on; the checkbox widget never degrades to raw `[ ]` on the active line, and clicking the checkbox still toggles the task. **← selects the checkbox character**: with the cursor parked at the content start (`- [ ] |`), ← selects the status character between the brackets — while selected the checkbox temporarily falls back to raw text (status character highlighted, list bullet unaffected), and typing any character replaces it, restores the checkbox rendering and puts the cursor back at the content start (`- [typed] |`); ← / → again cancels the selection back to the right edge. Combined with custom-mark plugins like Task Collector, the completion state can be rewritten entirely from the keyboard; works in Live Preview and source mode alike.
 - **Backspace Level Promotion** (on by default) — at the right boundary of the integrated marker (`- |` or `- [ ] |`, exactly where List Integration parks the cursor), Backspace no longer deletes the marker wholesale but unwinds progressively, one step per press: ① task items lose their checkbox first (`- [ ] |` → `- |`; ordered tasks keep `1. `); ② the item is then promoted level by level — the whole line's indent is replaced with the parent indent each press, content and subtree carried along (items with content promote too; a following former sibling becomes its child, matching Obsidian's native Shift+Tab line-level semantics); ③ with no shallower list line above (treated as top level) the list format is removed outright — leading indent and marker deleted, content kept. Requires List Integration; checkbox stripping requires Checkbox Integration.
 - **Fold via list bullet on the active line** — restores hover arrow and click-to-fold on the line the cursor occupies (Obsidian disables this on active lines).
-- **Enter Soft Break** — Enter inside a list item inserts a soft line break (newline + continuation indentation) instead of a new item; pressing Enter again on the blank continuation line creates the next list item. New items inherit the checkbox: after a soft break inside a task item, the created item starts with a checkbox too (always unchecked, matching Obsidian's native behavior).
+- **Enter Soft Break** — Enter inside a list item inserts a soft line break (newline + continuation indentation) instead of a new item; pressing Enter again on the blank continuation line creates the next list item. New items inherit the checkbox: after a soft break inside a task item, the created item starts with a checkbox too (always unchecked, matching Obsidian's native behavior). Inheritance follows Obsidian's native task-line rule — **any single character** between brackets counts (`[ ]`, `[x]`, Minimal's `[-]`, Tasks' `[/]`, …), and a space must follow `]` (space-less spellings never render a checkbox natively).
 - **Focus list item** — moving into an item folds everything outside the focus chain (current item, ancestors, descendants); sub-settings: max second-level children to expand (slider 1–9 + toggle) and scroll sync (scrolls the focused row to 25% of the viewport after folding).
 - **Arrow keys don't skip folded items** — ↓/↑ expand a folded list/headline block and enter it, keeping the column; plus an ↑ sibling jump-back at any depth when the previous line's item is deeper.
 - **Expand/collapse sibling lists or headings (command)** — folds or unfolds the current row and every same-level list item/heading document-wide; reports the affected count. Bindable in Hotkeys; optional context-menu item.

@@ -90,13 +90,16 @@ const enterCapturePlugin = ViewPlugin.fromClass(
 					if (prevLine.text.trim().length > 0) {
 						const beforeMarker = view.state.doc.sliceString(
 							markerLine.from, lastMarker.from);
-						// 勾选框继承：所属列表项首行标记后紧跟任务勾选框
-						// （[ ]/[x]/[X]）时，新列表项同样以勾选框起头，
-						// 状态固定为未勾选（与 Obsidian 原生在任务项末尾
-						// 回车新建项的行为一致）
+						// 勾选框继承：所属列表项首行标记后紧跟任务勾选框时，
+						// 新列表项同样以勾选框起头，状态固定为未勾选（与
+						// Obsidian 原生在任务项末尾回车新建项的行为一致）。
+						// 判定对齐 Obsidian 原生任务行正则（\[(.)\] 后必须
+						// 紧跟空格）：方括号内任意单字符均视为勾选框（Minimal
+						// 的 [-]、Tasks 的 [/][>] 等）；`]` 后无空格时原生
+						// 不渲染勾选框，回车同样不续任务
 						const afterMarker = markerLine.text.slice(
 							lastMarker.to - markerLine.from);
-						const checkbox = /^\s*\[[ xX]\]/.test(afterMarker)
+						const checkbox = /^\s*\[.\] /.test(afterMarker)
 							? '[ ] ' : '';
 						const replacement = beforeMarker + markerText + checkbox;
 

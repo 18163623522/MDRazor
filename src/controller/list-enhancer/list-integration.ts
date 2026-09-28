@@ -19,6 +19,13 @@
  *      勾选框（`- [ ] |` → `- |`），再逐级提升（每按一次提升一级，整行
  *      缩进替换为父级缩进，内容与子树随行），无父级（视为一级）则直接
  *      删除列表格式。
+ *   4. 「← 选中勾选框字符」（勾选框一体化）— 光标位于任务项原子区间
+ *      右边界（`- [ ] |`）时按 ←：原生行为是移入区间即被光标纠正推回
+ *      （按键失效），改为选中勾选框状态字符（`[]` 之间的单字符）。选中
+ *      期间选区触碰标记区间，复选框 widget 由 Obsidian 光标感知装饰自然
+ *      拆除退回原文，键入任意字符替换选区后光标经既有纠正复位回右边界、
+ *      复选框恢复渲染；选区已存在时再按 ← / →，原生塌缩加光标纠正即
+ *      完成「取消选区回右边界」，无需额外拦截。
  */
 
 import {
@@ -242,13 +249,62 @@ function resolveBoundaryAction(
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-//  DOM 事件处理器 — Backspace / Delete
+//  「← 选中勾选框字符」
 // ═══════════════════════════════════════════════════════════════════════════
 
 /**
- * 拦截 Backspace 和 Delete 按键。如果正在删除的单个字符与任何原子区间
- * 重叠，通过 `expandDeletion()` 扩展删除以移除整个标记（并可能与上一个
- * 列表项合并）。
+ * 光标位于任务项原子区间右边界（`- [ ] |`，一体化把光标推到的内容起点）
+ * 时按 ←：原生行为是移入区间即被光标纠正推回右边界（按键失效），改为
+ * 选中勾选框状态字符（`[]` 之间的单字符），供键盘直接改写完成状态
+ * （Task Collector 等自定义标记同此）。仅需勾选框一体化——勾选框原子
+ * 区间在列一体化关闭时同样存在。
+ *
+ * 后续行为无需再拦截，全部由既有机制完成：
+ *   - 选中期间选区（anchor ≠ head）被光标纠正跳过；选区与标记区间重叠，
+ *     Obsidian 光标感知装饰自动拆除复选框 widget 退回原文（列表符号不受
+ *     影响，选区未触及列表标记区间）；
+ *   - 键入任意字符替换选区，事务里的新光标落回区间内，纠正链复位到
+ *     右边界，复选框随之恢复渲染（`- [键入值] |`）；
+ *   - 选区已存在时再按 ← / →，原生塌缩到选区左/右端后仍落在原子区间
+ *     内，纠正同样复位到右边界——即「取消选区回右边界」。
+ *
+ * @param view  当前的 EditorView
+ * @returns     是否已派发选区（true 时调用方应阻止默认行为）
+ */
+function selectCheckboxStatusChar(view: EditorView): boolean {
+	const sel = view.state.selection.main;
+	if (sel.anchor !== sel.head) return false;
+
+	const pos = sel.head;
+	const line = view.state.doc.lineAt(pos);
+	for (const r of getCurrentAtomicRanges()) {
+		if (r.from >= line.from && r.to <= line.to && r.to === pos) {
+			const match = /\[.\]\s?$/.exec(view.state.doc.sliceString(r.from, r.to));
+			if (!match) return false;
+			const charFrom = r.to - match[0].length + 1;
+			view.dispatch({
+				selection: { anchor: charFrom, head: charFrom + 1 },
+				scrollIntoView: false,
+			});
+			return true;
+		}
+	}
+	return false;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  DOM 事件处理器 — Backspace / Delete / ArrowLeft
+// ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * 拦截 Backspace / Delete / ArrowLeft 按键。
+ *
+ * Backspace / Delete：如果正在删除的单个字符与任何原子区间重叠，通过
+ * `expandDeletion()` 扩展删除以移除整个标记（并可能与上一个列表项合并）。
+ *
+ * ArrowLeft：右边界上的「← 选中勾选框字符」手势（见
+ * `selectCheckboxStatusChar`），仅依赖勾选框一体化，故在其开关判定后、
+ * 列一体化判定前分流。
  *
  * 我们使用 `EditorView.domEventHandlers`（而不是事务过滤器），
  * 因为需要 `event.preventDefault()` —— 过滤器 API 无法取消已分发的
@@ -256,6 +312,12 @@ function resolveBoundaryAction(
  */
 const listDeleteHandler = EditorView.domEventHandlers({
 	keydown(event, view) {
+		if (event.key === 'ArrowLeft' && listEnhancerConfig.checkboxIntegration) {
+			if (!selectCheckboxStatusChar(view)) return false;
+			event.preventDefault();
+			return true;
+		}
+
 		if (!listEnhancerConfig.listIntegration) return false;
 
 		const isBackspace = event.key === 'Backspace';
