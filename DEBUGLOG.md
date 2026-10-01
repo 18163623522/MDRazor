@@ -4,7 +4,118 @@
 
 ---
 
-## 未发布 (2026-09-28)
+## 2.6.7 (2026-10-01)
+
+### 阅读视图：后续行比首行多缩进一点点 —— markdown-it 的 `'<br>\n'` 被占位元素挤离行首
+
+**现象：** 用户截图反馈「阅读视图后续的缩进没对齐第一行缩进，是因为没考虑到字体大小的关系吗？」——后续行比首行**多**出约 0.3~0.4 个字符宽。
+
+**根因（实测确认）：** markdown-it 渲染软换行输出的是 **`'<br>\n'`** —— `<br>` 后面跟一个换行符，它会被 HTML 解析器并进紧随其后的文本节点开头（DOM 形如 `"\n乙段内容"`）。上一轮我把占位元素直接插在 `<br>` 与该文本节点之间，这段前导空白**不再位于行首**，于是不被「行首空白丢弃」规则吃掉，而是塌缩成**一个空格**，把该行多推一个空格宽。首行没有前置 `<br>`，因此不受影响 —— 差值恰好是一个空格宽（CJK 字体约 0.25~0.5em），与截图量级一致。
+
+**修法：** 占位元素插到**前导空白之后**：从 `<br>` 往右扫，跳过整段皆空白的文本节点与已插入的占位元素；遇到以空白开头的文本节点就 `splitText` 切开，把前导空白留在 `<br>` 之后、占位元素插在切开后的内容之前。幂等判定同时改在这一次扫描里完成（扫到占位元素 = 已处理）。
+
+**避坑记录：**
+
+1. **别用「手写 HTML」复现 Obsidian 的渲染** —— 我前两轮自建夹具时手写的是 `<br><span class="spacer"></span>乙…`，**漏了 markdown-it 那个 `\n`**，于是怎么量都「首行与后续行完全相等」，反而把真正的原因排除掉了。复现宿主渲染必须照抄它的 HTML 输出形状（markdown-it 的 softbreak 规则是 `options.breaks ? '<br>\n' : '\n'`），或者直接抓真实 DOM。
+2. **量行首要用「逐节点」而不是「Range 聚合 + 按 top 取 min」** —— 零高占位元素、空白文本节点的 rect 会污染按行分组的 min 值，前两轮我因此两次得出错误结论（先是误判「`br::after` 伪元素不渲染」，后是误判「两行完全对齐」）。逐文本节点 `selectNode` + `getClientRects()` 才可信。
+3. **差值 4.73px @ 16px 字号 = 0.3em，正是一个空格宽** —— 这个量级本身就是线索：它不是字体度量差异（`em` 与字形无关），而是「多了一个字符」。
+4. 反证与正证都在无头实测台里跑过：旧插入位置 → 首行 40、后续行 **[44.73, 44.73]**；修复后 → 首行 40、后续行 **[40, 40]**。
+
+### 首行缩进：阅读视图的逐行缩进（`<br>` 之后补空 inline-block 占位元素）
+
+**现象：** 实时预览的单回车换行缩进正常了，但**阅读视图**对应位置没跟上。
+
+**根因：** 阅读视图里单个回车只是 `<p>` 内的一个 `<br>`（Obsidian 用 markdown-it 的 `breaks: !strictLineBreaks`），而 `text-indent` 只作用于**块级容器的首行** —— `<br>` 之后的文本属于同一个块，拿不到缩进。上一轮实测排除了四种 CSS 做法（`br{display:block}`、`br::after` 伪元素不渲染、`<p>` 改纵向 flex 容器、`<span style="display:block">` 切匿名块盒 —— 匿名块盒也不应用 `text-indent`），当时结论是「只能改写宿主 DOM，不建议」；本轮用户明确要求跟上，遂按**最小侵入**做。
+
+**修法：** 新增 `src/controller/general/first-line-indent-reading.ts`，在正文段落里每个 `<br>` 之后插入一个**空的 inline-block 占位元素**（`.mdrazor-indent-spacer`）把该行撑右：
+
+- 空节点 → 不进文本内容，**选中复制不受影响**；不搬动任何原有节点；
+- `display:inline-block; width:<n>em; height:0` → 段落高度与插入前**逐像素一致**（实测 76.78 = 76.78），不撑高行距；宽度走 `--mdrazor-first-line-indent`，**改宽度无需重插**；
+- 撤销只需删掉带类名的节点。
+
+**避坑记录：**
+
+1. **插入时机靠 MutationObserver，且 `apply()` 必须幂等** —— 阅读视图的 DOM 由 Obsidian 每次渲染重建。对每个 `.markdown-reading-view` 挂观察器（`childList+subtree`），回调用 rAF 合并成一次重新应用；`apply()` 只在「需要补而没补 / 需要摘而没摘」时动 DOM，因此自己插入的节点不会自激成死循环（多跑一轮即收敛）。观察器用 WeakSet 去重，避免重复挂。
+2. **占位元素只在「功能开启 且 非严格换行」时插** —— 严格换行下 `<br>` 只可能来自**显式硬换行**（行尾两空格 / `\`），那在 CommonMark 里仍属同一段落，不该缩进（与实时预览侧「同段续行不缩进」一致）。`config-changed` 里筛 `strictLineBreaks` 时除重绘编辑器外也要重新应用阅读视图。
+3. **排除容器与 styles.css 保持一致** —— 用 `p.closest('li, blockquote, .callout, td, th, figcaption, .markdown-embed, .markdown-embed-content')` 判定「不是正文段落」，与样式表的排除项同源；另外 `<br>` 是段落最后一个节点时（后面没内容）不插。
+4. **作用域同样要收**（承接上一轮 Glimpse 提词器的问题）—— 只处理 `.markdown-reading-view .markdown-preview-view` 里的段落，提词器那种「借 `markdown-preview-view` 类但没有 `.markdown-reading-view` 祖先」的容器不受影响。
+5. **端到端实测（真实浏览器 + 真实模块）** —— 无头实测台里搭了阅读视图 mock（正文段落 / 列表项 / callout / 尾随 `<br>` / 提词器风格容器各一），实测：正文段落 **2** 个占位、其余全 **0**；三行文本左边界 **[40, 40, 40]**（修前是 [40, 8, 8]）；严格换行时占位 **0**、切回非严格 **2**、卸载后 **0**。静态夹具 `scripts/fixtures/first-line-indent-mechanism.html` 也补了 E 组（手工放占位元素的等价形态）作为可肉眼核对的留档。
+
+### 首行缩进：作用域收窄到真正的正文区域（修 Glimpse 提词器被误缩进）
+
+**现象：** 用户反馈「这种缩进能否局限在正文区域，现在我 glimpse 插件的提词器也被影响了」。
+
+**根因：** 两条作用域都过宽：
+- **阅读视图侧**用了 `.markdown-preview-view p`。而 `markdown-preview-view` / `markdown-rendered` 常被第三方视图借去复用主题样式 —— Glimpse 提词器的内容容器就是 `glimpse-tp-content markdown-rendered markdown-preview-view`（见 `Glimpse/src/teleprompter.ts:408`，注释里写明是刻意挂的）。于是提词器里的 `<p>` 也吃到了 `text-indent`。
+- **编辑器侧**没设门。扩展经 `registerEditorExtension` 注册，会挂到工作区里**所有** CM6 编辑器上，包括第三方视图自建的编辑区与画布文本节点。
+
+**修法：**
+- 阅读视图规则前缀加 `.markdown-reading-view`（asar 实证：app.css 里有 `.markdown-reading-view > .markdown-preview-view`，即阅读视图的规范结构），排除项同步加前缀。
+- 编辑器侧在 `build()` 里加 `view.dom.closest('.markdown-source-view')` 判定（与 format-hider 同款），把范围收回到 Obsidian 自己的 Markdown 编辑器（源码模式与实时预览共用该容器）。
+
+**避坑记录：**
+
+1. **借类复用主题样式会让别人的按类规则外溢** —— 第三方视图把 `markdown-preview-view` / `markdown-rendered` 挂到自己容器上是常见做法（能白拿主题排版），代价是**任何**按这两个类写的插件 CSS 都会命中它。所以自己的规则不能只按这两个类选，必须再收一层到 Obsidian 的正文容器（阅读视图 `.markdown-reading-view`、编辑器 `.markdown-source-view`）。这两条都是 asar 实证过的规范结构。
+2. **作用域两侧都要收，不能只改 CSS** —— 编辑器侧是 JS 加的行装饰，光改样式表拦不住（装饰会照样挂到第三方编辑器的行上）。
+3. **验证用同一个夹具页做对照** —— `scripts/fixtures/first-line-indent-mechanism.html` 扩成四组：A 纯 CSS 双行都缩进（46/46）、B 插件只缩首行（46/14）、C 阅读视图正文缩进（40）、**D 提词器风格容器（有 `markdown-preview-view` 类、无 `.markdown-reading-view` 祖先）左边界 8 = 不缩进**。编辑器侧另在无头实测台加了一个「裸 CM6 编辑器」反例，实测 `bareEditorMarks: []`。
+
+### 首行缩进：段落边界改为跟随 Obsidian 的「严格换行」设置
+
+**现象：** 用户反馈「非严格换行，也即单回车，不会被当作是新行，从而遗漏了缩进」——按单回车分段时，只有整段第一行缩进，后续行齐左。
+
+**根因：** 判定段落边界时按 CommonMark 语义处理（连续 `text` 行 = 同一段落，只有第一行是首行）。但 Obsidian 的**默认设置就是非严格换行**（asar 实证：默认设置表 `ME` 里 `strictLineBreaks: false`），此时单个换行在渲染中就是一次硬换行 —— 阅读视图里 `甲\n乙` 渲染成 `<p>甲<br>乙</p>`，实时预览里更是每行一个 `.cm-line`。用户按单回车写段落时，「一行即一段」，所以每个正文行都该缩进。
+
+**修法：** 读 `app.vault.getConfig('strictLineBreaks')`（未进 typings，经类型收窄访问；取不到时按 Obsidian 默认值 false 处理）：
+- **非严格（默认）**：每个 `text` 行都是段落首行，都缩进；
+- **严格**：保持原行为，同段续行不缩进。
+`config-changed` 事件里筛 `strictLineBreaks` 触发一次重绘（否则要等下次编辑才刷新）；段落判定缓存键加上该标志位。
+
+**避坑记录：**
+
+1. **阅读视图的固有差异改不了，已实测三种 CSS 方案全失败** —— 非严格换行下单个回车在 HTML 里只是 `<p>` 内的一个 `<br>`（`markdown-it` 的 `breaks: !strictLineBreaks`），而 `<br>` 之后的文本**拿不到 `text-indent`**：① `br{display:block}` 无效；② `br::after{content:"　　"}` 伪元素在 `<br>` 上根本不渲染；③ 把 `<p>` 改成 `flex-direction:column` 容器让 `<br>` 成为独立 flex 项也无效。另外用 `<span style="display:block">` 验证了**匿名块盒不会应用 `text-indent`**（Chromium 实测，量 `Range.getClientRects()` 的行框左边界）。结论：阅读视图只能缩进「CommonMark 段落」的首行 —— 这与它把整组单回车行渲染成**一个** `<p>` 的事实一致，已在设置项说明与 styles.css 注释里写明。
+2. **回归用例要覆盖两种模式，且非严格模式的期望值没有第三方参考实现可对拍** —— 严格模式仍以 `@codemirror/lang-markdown` 的 `Paragraph` 为准；非严格模式是 Obsidian 的渲染选择（CommonMark 里没有这个概念），期望值只能来自渲染语义，脚本里已注明这一层「无参考实现」。另加了一条夹具不变量：**非严格结果必然是严格结果的超集**，多出来的必须全是同段续行（夹具里正是 L11 / L101 / L112 三处）。
+3. **无头实测台要能切「严格换行」** —— 把 `obsidian` 桩扩成带 `stubVault.getConfig()` 的假 App，并走真实入口 `registerFirstLineIndent()`；同时给宿主补 `Element.prototype.setCssProps` 与 `window.activeDocument` 两个 Obsidian 全局（后者顺带发现 `window-scope.ts` 对 `activeDocument` 缺 `typeof` 守卫，已补）。实测结果：非严格 = 标记 `[0,1,5,20]`（硬换行续行**也**缩进，正是本次要修的）、严格 = `[0,5,20]`、关闭 = `[]`，来回切换即时生效。
+
+### 设置开关「改了要重启才生效」：先证链路是通的，再修 4 处真实缺口
+
+**现象：** 用户反馈「MDRazor 很多开关状态改变后，必须重启 Obsidian 才生效」。
+
+**排查（四层证据，先证明链路本身没问题，再找缺口）：**
+
+1. **静态审计 64 个设置键的消费点** —— 全部有实时路径：CM6 模块读 `syncConfig()` 写入的模块级配置对象；DOM / 事件模块读 `() => settings.X` 取值器；按钮 / 图标类开关在 `onChange` 里显式增删；body 类走 `apply*` 函数。
+2. **机械审计设置面板的 38 个 `Setting` 块** —— 凡带 `addToggle` / `addSlider` 的一律调用了 `saveSettings()`，**0 处遗漏**。
+3. **CM6 源码核实「空事务重绘」这条路** —— `view.dispatch({})` 产生的 `ViewUpdate.empty` 为 **false**（`get empty() { return this.flags == 0 && this.transactions.length == 0 }`，而 transactions 长度为 1）→ `EditorView.update()` 照常调 `updatePlugins()` → 各 `ViewPlugin.update()` 执行 → 随后 `DocView.update()` 重新收集装饰。所以 `repaintAllEditors()` 是有效的。
+4. **端到端实测（真实 CM6 实跑，非推理）** —— 把真实的 `createFirstLineIndentExtension()` 塞进真实 CM6 实例（esbuild 打包 + `obsidian` 桩提供 `editorLivePreviewField` + Edge headless + CDP），关 → 开 → 关分别得到 **0 / 3 / 0** 个行装饰，且只落在 3 个正文段落上（硬换行续行、标题、列表、代码块、表格、引用全部排除）。**结论：开关 → 即时生效的链路本身是通的。**
+
+**本次修掉的 4 处真实缺陷（症状与用户反馈一致）：**
+
+1. **传播链可被单点异常静默掐断** — `saveSettings()` 里 `syncConfig()` → `repaintAllEditors()` → `dirFileCountRefresher.forceRefresh()` 顺序直连，任一步抛错后面全不执行且无日志 —— 表现正是「设置已保存、插件毫无反应、重启才生效」（重启走 onload，绕过了这条链）。现在逐段 try/catch + `console.error`，`dirFileCountRefresher?.`。
+2. **body 运行态只挂 `activeDocument`（多窗口缺口）** — body 开关类与 CSS 变量原先只挂**当前活动窗口**的 document，popout / 悬浮编辑器窗口里的编辑器拿不到样式 → 那些窗口里「开关没生效」。新增 `src/controller/general/window-scope.ts` 的 `forEachDocument(app, fn)`（主窗口 + 各 leaf 的 ownerDocument，按 document 去重；用 `node.ownerDocument ?? node` 判定 —— popout 的 document 来自另一个 realm，`instanceof Document` 会失败），四个 body 类模块（当前行高亮 / 鼠标行高亮 / 首行缩进 / 光标行列表折叠）全部改为**全窗口应用**。
+3. **重绘用 `instanceof MarkdownView`（跨 realm 失效）** — popout 的视图来自另一个 realm，`instanceof` 为假 → 那些编辑器不会被重绘。改为鸭子判定（`view.editor?.cm` 且 `dispatch` 是函数），并给单个编辑器加 try/catch 隔离（一个编辑器恰好处于一次更新中时不应连累其余）。
+4. **`符号边界提示` 关掉后弹框不消失** — 它的 `update()` 只在 `selectionSet || docChanged || geometryChanged` 时走 `updateHint()`，而设置面板改开关只派发**空事务** → 已显示的弹框要等下次光标移动才消失。补一个「开关翻转」判定并清掉位置缓存。
+
+**新增自愈点：** `applyRuntimeClasses()`（幂等、逐项异常隔离）统一由三处调用 —— `saveSettings()`、`workspace.on('layout-change')`（新开 popout / 悬浮窗口时补挂运行态）、设置面板 `display()`（打开面板即自愈）。
+
+**后续排查判据：** 某个开关「改了没反应」时，先看控制台有没有 `[MDRazor] 应用「X」运行态失败`；没有报错则多半是**运行中的实例还是旧构建** —— Obsidian 只在插件 enable 时重读 `main.js` / `styles.css`（`loadPlugin` → `loadCSS` 每次都重读并注入新 `<style>`，旧的在 unload 时 detach），热重载没生效时表现就是「必须重启」。判断当前跑的是哪一版：看设置里有没有本次新增的项。
+
+### 首行缩进：纯 CSS 做不到（浏览器实测），改由行分类器判定段落边界
+
+**需求：** 通用设置页新增「首行缩进」开关（默认关闭）+ 宽度滑块（1~2 个中文字符），为**正文段落**首行缩进，排除标题 / 表格 / 列表 / callout / 引用 / 代码块等一切非正文块。
+
+**实现位置：** `src/controller/general/first-line-indent-rules.ts`（纯函数行分类器）+ `src/controller/general/first-line-indent.ts`（CM6 行装饰 + body 开关类）+ `styles.css`（编辑器行与阅读视图 `<p>` 共用 `--mdrazor-first-line-indent`）+ 设置页通用区。
+
+**避坑记录：**
+
+1. **纯 CSS 无法实现「只缩段落首行」——这是本功能存在的唯一理由，已实测** — CodeMirror 里没有「段落」元素，一段硬换行的正文就是一串兄弟 `.cm-line`（CM6 基础主题 `.cm-line { display: block; padding: 0 2px 0 6px }`），而 `text-indent` 作用于**块级元素的首行**。用真实浏览器量 `Range.getClientRects()` 的首个左边界（探针页 `scripts/fixtures/first-line-indent-mechanism.html`，Edge headless + CDP，窗口 520×600 / 16px 字体 / 2em = 32px）：**给所有 `.cm-line` 写 `text-indent` → 两行左边界都是 46px（每一行都缩进）；只给段落首行挂类 → 首行 46px、续行 14px（齐左）**。基线 14px = body padding 8 + `.cm-line` padding-left 6。所以缩进位置必须由 JS 判定。阅读视图则相反：正文是真正的 `<p>`，纯 CSS + 排除项就够（本模块的样式表部分）。
+2. **不要指望 Obsidian 的语法树给出段落节点（asar 实证，别再试第二次）** — 手工解包 `obsidian-1.13.7.asar` 的 `app.js`：Obsidian 的 markdown 语言是 **HyperMD 流式模式的 CM6 移植**（`StreamLanguage` + 自定义 `createParse`，见 `parseLine`）。它的节点类型由 token 串现造：`Ep(token, isLineClass)` → `NodeType.define({ name: token.replace(/ /g,'_'), props:[Sp|Mp] })`，即**节点名 = token 串把空格换成下划线**（`formatting_formatting-strong`、`HyperMD-header_HyperMD-header-1`）。而 `parseLine` **只为「带行类 token 的行」emit 一个覆盖整行的节点**，纯文本行（CM5 内联模式返回 null）**不产出任何节点** —— 整棵树里根本没有 `Paragraph` / `BulletList` 这类块级节点（`ATXHeading`/`FencedCode` 在整个 asar 里都不存在，`FencedCode` 那 3 处命中在 `lib/codemirror/markdown.js`，与 CM6 无关）。结论：**块结构只能自己判**，本项目其它模块用 `syntaxTree` 找 `formatting-*` 内联 token 的做法在这里不适用。
+3. **自研行分类器要用参考实现对拍，别靠手感** — `first-line-indent-rules.ts` 是纯函数（不 import obsidian / CM6），用 esbuild 打进 Node 直接跑。期望值取自 **`@codemirror/lang-markdown`（@lezer/markdown，CommonMark+GFM 参考实现）对同一份夹具的 `Paragraph`（父节点为 `Document`）行号**，不是从本实现反推。夹具 `scripts/fixtures/first-line-indent.md` 覆盖 12 种块结构，跑 `npm run verify:indent` 回归（已做变异验证：去掉「续行不算段落首行」判定后夹具与内联用例双双变红）。**四处刻意偏离**已在脚本 `KNOWN_DEVIATIONS` 里逐条写明理由：属性区（参考实现不认 frontmatter）、`^block-id` 独占行、`%%注释%%` 独占行、表格末尾紧跟的不含 `|` 行（Obsidian 的 hypermd 表格在行式不匹配时 `wU()` 复位表格）。
+4. **Setext 下划线必须早于分割线判定** — `HR_RE`（`(?:[-*_]\s*){3,}`）同样匹配 `---`，排在前面就会把 `段落\n---` 抢成「段落 + 分割线」，段落首行被误缩进（首版即此 bug，夹具里的多行 Setext 用例与内联用例同时抓到）。另需两个配套：**下划线行的判定要最先做**（上一行已按「下一行是下划线」改判为标题时置 `pendingSetextUnderline`，本行直接归为 heading），以及**多行段落 + 下划线要整段回溯改判**（连续 `text` 行全部改 heading），否则多行段落的第一行仍会被当成段落首行。
+5. **表格行式复刻 Obsidian 而非 GFM** — Obsidian 的表格有两种模式：表头行有前导 `|` 为 NORMAL（此后每行须 `fU = /^\|/`），无前导 `|` 为 SIMPLE（此后每行须 `pU = /^\s*[^\|].*\|/`）；行式不匹配即 `wU()` 复位、表格结束。这与 @lezer/markdown 不同（后者会把不含 `|` 的后续行并进 Table 节点）。表格结束的那一行必须**继续走后续块判定**（不能 `continue`），否则会被整行吞掉。
+6. **缩进只在实时预览 + 阅读视图生效，源码模式刻意不生效** — 缩进由行装饰（`editorLivePreviewField` 为真才建）驱动；源码模式下缩进会把源码本身推右，看起来像误输入的空格。判定逻辑本身与模式无关（源码模式的硬换行段落同样能正确识别），所以以后若要放开，删掉那一行 gate 即可。
+7. **`text-indent` 不破坏 CM6 的光标定位** — CM6 的 `posAtCoords` 走 `caretPositionFromPoint` / `caretRangeFromPoint`（布局感知），`getClientRects` 也包含 `text-indent` 造成的偏移，故点击落点与选区矩形都自动跟随（`@codemirror/view` 里没有任何针对 `text-indent` 的特判，源码确认）。
+8. **性能：段落判定按文档对象缓存** — 行分类是 O(行数) 的全篇扫描，只在 `doc` 对象变化（即文档真的改了）时重算，纯光标移动/滚动复用上次结果；装饰只给 `visibleRanges` 内的段落首行建，与空格可视化/打字机同量级。
+
+## 2.6.6 (2026-09-28)
 
 ### 勾选框键盘编辑（← 选中状态字符）+ 任务判定对齐原生（asar 实证）
 
@@ -18,7 +129,7 @@
 4. **「取消选区回右边界」不要额外拦截** — 原生 ← / → 对选区的塌缩端点（左/右端）仍落在原子区间内，纠正链自动复位到 `r.to`，与期望行为完全一致；多写一层拦截反而要自己处理塌缩方向（head/anchor 哪端）与方向键语义分叉。
 5. **压缩产物里搜正则字面量的转义坑** — app.js 正则字面量原样保留，但检索时 bash 双引号会把 `\\[` 吃成 `\[`、JS 字符串字面量又会把 `\]` 求值成 `]`，两层转义叠加导致 needle 静默变样（搜了个不存在的东西还以为搜过）。用 `String.fromCharCode(92)` 拼 needle 或写临时脚本文件，别在 `node -e "..."` 里裸写反斜杠。
 
-## 未发布 (2026-09-27)
+### （并入 2.6.6）同日改动
 
 ### Callout 编辑面板：类型/元数据候选改用自带下拉（超屏 + 滚动不跟随）
 
@@ -40,9 +151,8 @@
 10. **顺带堵掉的潜伏 bug：`paste`/`drop` 此前不在冒泡拦截清单里** — 正文文本域有自己的 paste 处理器（preventDefault + stopPropagation），但类型/元数据输入框没有：粘贴事件一路冒泡进 CM6，若 CM 选区恰位于 callout 源码行首（很可能 —— 用户正对着这个 callout 编辑），粘贴兜底扩展会 preventDefault 并把内容写进文档 → widget 重建 → **编辑面板连同未提交内容当场销毁**。drop 同理。两者纳入 `swallowedEvents` 后，面板内任何输入路径都不再可能触碰文档。
 11. **字段监听器零清理负担** — 自带下拉的所有监听都挂在面板自有节点（input / dropdown / 条目）上，面板随会话销毁即被 GC，没有任何 doc/window 级监听，无需 dispose（对比：挂在 `.callout` 上的监听必须清理，因为 `closeSession(false)` 后 callout 仍留在 DOM 里）。
 
----
 
-## 未发布 (2026-09-27)
+### （并入 2.6.6）同日改动
 
 ### Callout 编辑面板：正文文本域高度随内容自适应增高
 
@@ -59,9 +169,8 @@
 5. **`resize: vertical` 与自适应互相矛盾，去手柄** — 自适应后每次输入都重设高度，用户拖大的尺寸在下一次按键即被抹掉；留着手柄只会制造「拖了又缩回去」的怪异感。`min-height: 5em` 保留为下限。不采用 CSS `field-sizing: content`：WKWebView 尚未支持，移动端会退化，scrollHeight 方案全平台一致。
 6. **动态样式必须走 `setCssProps`，不能 `el.style.height = ...` 直赋** — 审核环境的 `eslint-plugin-obsidianmd` 0.4.x 有 `no-static-styles-assignment`（error 级），直赋直接 lint 红。`setCssProps` 内部就是逐键 `style.setProperty`，对标准属性同样有效（`{ height: '85px' }`）；两次调用之间读 `scrollHeight` 会强制同步布局，测量准确。
 
----
 
-## 未发布 (2026-09-27)
+### （并入 2.6.6）同日改动
 
 ### 鼠标/滚轮行高亮：排除代码块
 
@@ -81,7 +190,7 @@
 
 ---
 
-## 未发布 (2026-09-23)
+## 2.6.5 (2026-09-27)
 
 ### Callout 增强：单击不退回纯文本 + 就地编辑纯文本 + 粘贴自动补 `>`
 
@@ -161,9 +270,8 @@
 3. **判定「本插件是否被重载」的可靠信号** — `md-razor-position-cache.mirror.json` 在卸载时立即落盘（见 `position-persistence`），重建 `main.js` 后 1s 内刷新即证明 hot-reload 生效；再配合 `community-plugins.json` / `workspace.json` 的 mtime 是否被触碰，即可判断这次重载有没有产生跨插件副作用。
 4. **本插件的懒加载会让接管插件处于「持久化停用 + 会话内运行」态** — 该状态下 hot-reload 不会重载它（`reload()` 开头 `if (!plugins.enabledPlugins.has(plugin)) return` 静默跳过），所以改 Glimpse 之类被接管插件的源码后，重建 `main.js` 不会在运行中的 Obsidian 里生效，需重启应用或先在第三方插件设置里启用该插件。
 
----
 
-## 未发布 (2026-09-22)
+### （并入 2.6.5）同日改动
 
 ### callout 补偿的前提消失：片段侧 `inline-block` → `block + width: fit-content`
 

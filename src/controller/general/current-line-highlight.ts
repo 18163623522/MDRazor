@@ -20,7 +20,8 @@
  * 300ms 后消失），当前行高亮是跟随光标的常驻效果，只随设置开关变化。
  */
 
-import { Plugin } from 'obsidian';
+import { Plugin, type App } from 'obsidian';
+import { forEachDocument } from './window-scope';
 
 /** body 上的「当前行高亮」开关类：随设置常驻（styles.css 以此限定高亮规则生效） */
 export const CURRENT_LINE_HIGHLIGHT_CLASS = 'mdrazor-current-line-highlight';
@@ -33,25 +34,27 @@ let isEnabledRef: (() => boolean) | null = null;
  * 无 DOM 事件监听——.cm-active 光标行状态由 CodeMirror 维护，
  * CSS 规则随 body 类常驻即时生效。
  *
- * @param _plugin   Plugin 实例（签名与兄弟模块一致；此类驱动无监听需清理）
+ * @param plugin    Plugin 实例（取 app 以覆盖所有窗口的 document）
  * @param isEnabled 设置读取器：设置切换无需重注册
  */
-export function registerCurrentLineHighlight(_plugin: Plugin, isEnabled: () => boolean): void {
+export function registerCurrentLineHighlight(plugin: Plugin, isEnabled: () => boolean): void {
 	isEnabledRef = isEnabled;
-	if (isEnabled()) activeDocument.body.classList.add(CURRENT_LINE_HIGHLIGHT_CLASS);
-	else activeDocument.body.classList.remove(CURRENT_LINE_HIGHLIGHT_CLASS);
+	applyCurrentLineHighlightClass(plugin.app);
 }
 
 /**
  * 设置变化后同步状态（saveSettings → syncConfig 调用）：
  * 开启挂类、关闭摘类。纯 classList 切换，即时生效，无需重绘编辑器。
+ *
+ * @param app App 实例：类挂到**所有已打开窗口**的 document（主窗口 + popout），
+ *            只挂 activeDocument 会让 popout 里的编辑器拿不到样式
  */
-export function applyCurrentLineHighlightClass(): void {
-	if (isEnabledRef?.()) activeDocument.body.classList.add(CURRENT_LINE_HIGHLIGHT_CLASS);
-	else activeDocument.body.classList.remove(CURRENT_LINE_HIGHLIGHT_CLASS);
+export function applyCurrentLineHighlightClass(app: App): void {
+	const enabled = isEnabledRef?.() ?? false;
+	forEachDocument(app, (doc) => doc.body.classList.toggle(CURRENT_LINE_HIGHLIGHT_CLASS, enabled));
 }
 
 /** 插件卸载时清理（body 类由 JS 添加，需手动摘除） */
-export function removeCurrentLineHighlightClass(): void {
-	activeDocument.body.classList.remove(CURRENT_LINE_HIGHLIGHT_CLASS);
+export function removeCurrentLineHighlightClass(app: App): void {
+	forEachDocument(app, (doc) => doc.body.classList.remove(CURRENT_LINE_HIGHLIGHT_CLASS));
 }

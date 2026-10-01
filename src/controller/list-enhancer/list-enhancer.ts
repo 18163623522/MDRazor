@@ -11,6 +11,8 @@
  */
 
 import { Prec } from '@codemirror/state';
+import type { App } from 'obsidian';
+import { forEachDocument } from '../general/window-scope';
 import { createListIntegrationExtension } from './list-integration';
 import { createEnterSoftBreakExtension } from './enter-soft-break';
 import { createFocusOptionsExtension } from './focus-options';
@@ -35,21 +37,19 @@ export const LIST_FOLD_ACTIVE_LINE_CLASS = 'mdrazor-fold-active-line';
  *
  * 在插件 onload / saveSettings 后调用（settings 已写入 listEnhancerConfig）。
  */
-export function applyListFoldOnActiveLineClass(): void {
-	// activeDocument 为 Obsidian 全局变量（obsidian.d.ts declare global），
-	// 与浏览器 document 的区别：弹出窗（popout window）聚焦时指向弹出窗口的文档。
-	activeDocument.body.classList.toggle(
-		LIST_FOLD_ACTIVE_LINE_CLASS,
-		!!listEnhancerConfig.listFoldOnActiveLine,
-	);
+export function applyListFoldOnActiveLineClass(app: App): void {
+	// 挂到**所有已打开窗口**的 document（主窗口 + popout / 悬浮编辑器窗口）。
+	// 只挂 activeDocument 时，popout 里的编辑器拿不到类、该窗口内功能失效。
+	const enabled = !!listEnhancerConfig.listFoldOnActiveLine;
+	forEachDocument(app, (doc) => doc.body.classList.toggle(LIST_FOLD_ACTIVE_LINE_CLASS, enabled));
 }
 
 /**
  * 插件卸载（用户禁用）时移除 body 开关类。
  * styles.css 由 Obsidian 自动移除，但该类是 JS 添加的，需手动清理。
  */
-export function removeListFoldOnActiveLineClass(): void {
-	activeDocument.body.classList.remove(LIST_FOLD_ACTIVE_LINE_CLASS);
+export function removeListFoldOnActiveLineClass(app: App): void {
+	forEachDocument(app, (doc) => doc.body.classList.remove(LIST_FOLD_ACTIVE_LINE_CLASS));
 }
 
 /**

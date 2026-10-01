@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<!--
+  首行缩进机制验证页（静态，直接用浏览器打开即可看）
+
+  三组对照，都用真实布局量 `Range.getClientRects()` 的首个 line box 左边界：
+
+  ① 纯 CSS 为什么做不到「只缩段落首行」
+     一段硬换行的正文在 CodeMirror 里会渲染成两个兄弟 .cm-line（CM6 的
+     .cm-line 是 display:block，每行源码一个块）：
+       方案 A（naive）：给所有 .cm-line 加 text-indent → 每一行都缩进
+       方案 B（plugin）：只给段落首行挂类 → 首行缩进、续行齐左
+
+  ② 阅读视图的作用域必须收到 .markdown-reading-view
+     `markdown-preview-view` / `markdown-rendered` 常被第三方视图借去复用主题
+     样式（Glimpse 提词器的内容容器就是
+     `glimpse-tp-content markdown-rendered markdown-preview-view`）：
+       方案 C：`.markdown-reading-view .markdown-preview-view p` → 缩进（正文区域）
+       方案 D：同结构的提词器风格容器（无 .markdown-reading-view）→ 不缩进
+
+  2026-10-01 实测（Edge headless，窗口 520×600，16px 系统字体，2em = 32px，
+  基线左边界 14px = body padding 8 + .cm-line padding-left 6）：
+    方案 A → 第 1 行 [46]、第 2 行 [46]      （两行都缩进 = 纯 CSS 做不到）
+    方案 B → 第 1 行 [46]、第 2 行 [14]      （只有首行缩进）
+    方案 C → <p> 左边界 [40]                （阅读视图正文缩进）
+    方案 D → <p> 左边界 [8]                 （提词器容器不受影响）
+    方案 E → 三行文本左边界 [40, 40, 40]    （占位元素让 <br> 之后的行也缩进）
+             段落高度 76.78，与不加占位元素时**逐像素一致**（不撑高行距）
+-->
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>首行缩进机制与作用域验证</title>
+<style>
+	/* 复刻 CodeMirror 6 基础主题里 .cm-line 的关键几何：块级 + 内容宽度受限
+	   （CM6 的 .cm-line { display: block; padding: 0 2px 0 6px }） */
+	body { font-family: system-ui, sans-serif; margin: 0; padding: 8px; width: 420px; line-height: 1.6; }
+	.cm-line { display: block; padding: 0 2px 0 6px; }
+
+	/* ① 方案 A（纯 CSS，用户设想）：直接给所有 .cm-line 加 text-indent ——
+	   一段硬换行的正文会被拆成多个 .cm-line，每个都缩进 → 每一行都缩进 */
+	.naive .cm-line { text-indent: 2em; }
+
+	/* ① 方案 B（本插件）：只有段落首行带类，text-indent 只作用于它 */
+	.plugin .cm-line.mdrazor-indent-first-line { text-indent: 2em; }
+
+	/* ② 方案 C / D：与插件 styles.css 同款 —— 作用域收到 .markdown-reading-view。
+	   D 组是「有 markdown-preview-view 类、但没有 .markdown-reading-view 祖先」的
+	   提词器风格容器，按收窄后的选择器不应被缩进。 */
+	.c .markdown-reading-view .markdown-preview-view p,
+	.d .markdown-reading-view .markdown-preview-view p { text-indent: 2em; }
+
+	/* ③ 阅读视图的逐行缩进：<br> 之后的文本拿不到 text-indent，故由 JS 在每个
+	   <br> 之后插入一个空的 inline-block 占位元素把该行撑右（E 组为手工放的
+	   静态等价物，实际由 first-line-indent-reading.ts 插入）。 */
+	.e .markdown-reading-view .markdown-preview-view p { text-indent: 2em; }
+	.e .mdrazor-indent-spacer { display: inline-block; width: 2em; height: 0; }
+</style>
+</head>
+<body>
+<!-- ① 编辑器：纯 CSS vs 插件 -->
+<div id="naive" class="naive">
+	<div class="cm-line">这是第一段正文，硬换行的第二行仍在同一段内。</div>
+	<div class="cm-line">硬换行的第二行仍在同一段内。</div>
+</div>
+<div id="plugin" class="plugin">
+	<div class="cm-line mdrazor-indent-first-line">这是第一段正文，硬换行的第二行仍在同一段内。</div>
+	<div class="cm-line">硬换行的第二行仍在同一段内。</div>
+</div>
+
+<!-- ② 阅读视图（有 .markdown-reading-view 祖先 → 应缩进） -->
+<div id="c" class="c">
+	<div class="markdown-reading-view">
+		<div class="markdown-preview-view markdown-rendered">
+			<div class="markdown-preview-section"><p>阅读视图里的正文段落。</p></div>
+		</div>
+	</div>
+</div>
+
+<!-- ② 提词器风格容器（无 .markdown-reading-view → 不应缩进） -->
+<div id="d" class="d">
+	<div class="glimpse-tp-content markdown-rendered markdown-preview-view">
+		<p>提词器里的正文段落，不应被缩进。</p>
+	</div>
+</div>
+
+<!-- ③ 阅读视图逐行缩进（占位元素）：E 组手工放好占位元素，等价于 JS 插入后的结果 -->
+<div id="e" class="e">
+	<div class="markdown-reading-view">
+		<div class="markdown-preview-view markdown-rendered">
+			<p>甲段内容<br><span class="mdrazor-indent-spacer" aria-hidden="true"></span>乙段内容<br><span class="mdrazor-indent-spacer" aria-hidden="true"></span>丙段内容</p>
+		</div>
+	</div>
+</div>
+</body>
+</html>

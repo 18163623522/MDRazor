@@ -19,6 +19,11 @@ import { renderRibbonCustomization } from './ribbon-customization';
 import { renderCommandSurfaceSettings } from './command-surface-view';
 import { DataCleanupModal } from './data-cleanup-modal';
 import { CURRENT_LINE_HIGHLIGHT_CLASS } from '../controller/general/current-line-highlight';
+import {
+	FIRST_LINE_INDENT_MIN,
+	FIRST_LINE_INDENT_MAX,
+	applyFirstLineIndentClass,
+} from '../controller/general/first-line-indent';
 
 /**
  * 在 Obsidian 设置中显示的设置面板：设置 → 第三方插件 → MDRazor。
@@ -39,6 +44,9 @@ export class MDRazorSettingTab extends PluginSettingTab {
 	private typewriterOpacitySetting?: Setting;
 	private typewriterTopPaddingSetting?: Setting;
 	private typewriterDeadZoneJumpSetting?: Setting;
+
+	/** 首行缩进子设置项引用（开关关闭时隐藏缩进宽度滑块） */
+	private firstLineIndentSizeSetting?: Setting;
 
 	/** 当前激活的标签页索引（会话内记忆，设置面板重开时保留） */
 	private activeTabIndex = 0;
@@ -61,7 +69,13 @@ export class MDRazorSettingTab extends PluginSettingTab {
 		this.typewriterOpacitySetting = undefined;
 		this.typewriterTopPaddingSetting = undefined;
 		this.typewriterDeadZoneJumpSetting = undefined;
+		this.firstLineIndentSizeSetting = undefined;
 		this.lazyListEl = undefined;
+
+		// 打开设置面板时重新应用一次运行态（body 开关类 / CSS 变量）：
+		// 幂等，兼作自愈点 —— 运行态若因窗口重建 / 主题重载等外部原因丢失，
+		// 用户一进设置页就恢复，不必重启。
+		this.plugin.applyRuntimeClasses();
 
 		this.createTabbedSection(
 			containerEl,
@@ -134,6 +148,50 @@ export class MDRazorSettingTab extends PluginSettingTab {
 						await this.plugin.saveSettings();
 					}),
 			);
+
+		new Setting(panel)
+			.setName(tr('首行缩进', 'First-Line Indent'))
+			.setDesc(
+				tr(
+					'开启后，正文段落的首行按下方宽度缩进（1~2 个中文字符），仅实时预览与阅读视图生效（源码模式下缩进会把源码本身推右，故不生效）。段落边界跟随 Obsidian 的「严格换行」设置（设置 → 编辑器）：关闭（默认）时单个回车就是一次硬换行，每个正文行都算一段、都缩进；开启时单个回车是软换行，只有整段首行缩进。标题、表格、列表、引用与 callout、代码块、数学块、注释、HTML 块、属性区（frontmatter）、脚注与链接引用定义、独立块 ID、纯图片或嵌入段落等非正文块一律不缩进。CodeMirror 没有「段落」元素（一段正文就是一串 .cm-line），纯 CSS 无法区分段落首行与续行，故由插件按 Markdown 块结构逐行判定段落边界',
+					'When enabled, the first line of every body paragraph is indented by the width set below (1–2 Chinese characters). Applies to Live Preview and Reading view only (in source mode the indent would push the raw Markdown right, so it is skipped). Paragraph boundaries follow Obsidian\'s "Strict line breaks" setting (Settings → Editor): when off (the default) a single Enter is a hard line break, so every body line counts as its own paragraph and is indented; when on, a single Enter is a soft break and only the first line of the whole paragraph is indented. Headings, tables, lists, blockquotes and callouts, code blocks, math blocks, comments, HTML blocks, frontmatter, footnote and link-reference definitions, standalone block IDs, and image-only or embed-only paragraphs are never indented. CodeMirror has no paragraph element (a paragraph is just a run of .cm-line divs), so plain CSS cannot tell a paragraph start from a continuation line — the plugin classifies the Markdown block structure instead.',
+				),
+			)
+			.addToggle((toggle) =>
+				toggle
+					.setValue(this.plugin.settings.firstLineIndentEnabled)
+					.onChange(async (value) => {
+						this.plugin.settings.firstLineIndentEnabled = value;
+						// 直接同步 body 开关类与缩进变量：不等 saveSettings 的异步链
+						// （理由同「当前行高亮」）；saveSettings 内 syncConfig 幂等再同步
+						applyFirstLineIndentClass(this.plugin.app);
+						await this.plugin.saveSettings();
+						this.applyFirstLineIndentChildVisibility();
+					}),
+			);
+
+		this.firstLineIndentSizeSetting = new Setting(panel)
+			.setName(tr('首行缩进宽度', 'First-Line Indent Width'))
+			.setDesc(
+				tr(
+					'首行缩进宽度（1~2 个中文字符，1em = 一个中文字符宽）。仅「首行缩进」开启时生效',
+					'The first-line indent width (1–2 Chinese characters; 1em is the width of one Chinese character). Only applies while First-Line Indent is on.',
+				),
+			)
+			.addSlider((slider) =>
+				slider
+					.setLimits(FIRST_LINE_INDENT_MIN, FIRST_LINE_INDENT_MAX, 0.1)
+					.setValue(this.plugin.settings.firstLineIndentSize)
+					.setDynamicTooltip()
+					.onChange(async (value) => {
+						// 步长 0.1 在二进制下不精确，落盘前取整到一位小数（1.2000000000000002 → 1.2）
+						this.plugin.settings.firstLineIndentSize = Math.round(value * 10) / 10;
+						applyFirstLineIndentClass(this.plugin.app);
+						await this.plugin.saveSettings();
+					}),
+			);
+
+		this.applyFirstLineIndentChildVisibility();
 
 		new Setting(panel)
 			.setName(tr('行内代码增强', 'Inline Code Enhancement'))
@@ -1049,5 +1107,14 @@ export class MDRazorSettingTab extends PluginSettingTab {
 	syncTypewriterFromSettings(): void {
 		this.typewriterToggle?.setValue(this.plugin.settings.typewriterMode);
 		this.applyTypewriterChildVisibility();
+	}
+
+	/**
+	 * 首行缩进子设置项显隐：仅开关开启时显示「首行缩进宽度」。
+	 */
+	private applyFirstLineIndentChildVisibility(): void {
+		const show = this.plugin.settings.firstLineIndentEnabled;
+		// 用 CSS 类而非内联 style.display（Obsidian 审核规范），规则见 styles.css 的 .mdrazor-hidden
+		this.firstLineIndentSizeSetting?.settingEl.toggleClass('mdrazor-hidden', !show);
 	}
 }

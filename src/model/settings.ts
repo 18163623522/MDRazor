@@ -27,6 +27,13 @@ export interface MDRazorSettings {
 	 *  保持渲染外观；「编辑这个区块」按钮在保持渲染的前提下进入纯文本编辑，
 	 *  且粘贴多行文本时自动为后续行补全 `>` 前缀并校验 */
 	calloutEnhancer: boolean;
+	/** 首行缩进：为正文段落的首行添加缩进（仅实时预览与阅读视图生效）。
+	 *  默认关闭。标题、表格、列表、引用与 callout、代码块、数学块、注释、
+	 *  HTML 块、frontmatter、脚注与链接引用定义、独立块 ID、纯图片段落
+	 *  一律不缩进；段落硬换行产生的后续行也不缩进 */
+	firstLineIndentEnabled: boolean;
+	/** 首行缩进宽度（1~2 个中文字符；1em = 一个中文字符宽）。仅开关开启时生效 */
+	firstLineIndentSize: number;
 
 	// ── 懒加载 (controller/lazy-load/) ──
 	/** 懒加载总开关：关闭时全部插件按 Obsidian 默认方式（自然顺序）加载 */
@@ -185,6 +192,9 @@ export const DEFAULT_SETTINGS: MDRazorSettings = {
 
 	inlineCodeEnhancer: true,
 	calloutEnhancer: true,
+
+	firstLineIndentEnabled: false,
+	firstLineIndentSize: 2,
 
 	lazyLoadEnabled: false,
 	lazyLoadPlugins: {},

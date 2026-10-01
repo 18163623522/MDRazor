@@ -26,7 +26,7 @@ MDRazor is an Obsidian plugin dedicated to honing your Markdown editing experien
 
 **中文**
 
-- **编辑体验** — 隐藏格式标记 · 空格可视化 · 符号边界提示（框内 `|` 与光标对齐 · 夜间模式弹框可见）· 鼠标/滚轮移动时行高亮 · 当前行高亮 · 打字机模式 · 点击同步（点击/拖拽选错行根治，含 mouseup 最终纠错）· callout 之后行点击/拖拽错位根治（块 widget 行盒空隙并入测量）· 编辑器测量守护（行高表陈旧点击偏移根治）· Callout 增强（单击保持渲染 · 就地编辑面板 · 正文自适应增高 · 候选下拉）· 行内代码双击复制 · 光标与滚轴位置持久化
+- **编辑体验** — 隐藏格式标记 · 空格可视化 · 符号边界提示（框内 `|` 与光标对齐 · 夜间模式弹框可见）· 鼠标/滚轮移动时行高亮 · 当前行高亮 · 打字机模式 · 点击同步（点击/拖拽选错行根治，含 mouseup 最终纠错）· callout 之后行点击/拖拽错位根治（块 widget 行盒空隙并入测量）· 编辑器测量守护（行高表陈旧点击偏移根治）· Callout 增强（单击保持渲染 · 就地编辑面板 · 正文自适应增高 · 候选下拉）· 行内代码双击复制 · 首行缩进（排除非正文块 · 跟随「严格换行」· 预览与阅读双端）· 光标与滚轴位置持久化
 - **列表与结构** — 列表一体化（列一体化 / 勾选框一体化 / ← 选中勾选框字符 / 退格提升层级）· 回车软换行（任意单字符勾选框继承）· 选项聚焦 · 折叠同级列表/标题 · 活动行列表符号折叠 · 折叠项方向键穿越 · 目录聚焦 · 目录文件计数 · 批量删除空行（Markdown 感知）
 - **标签页与导航** — 默认在新标签页打开 · 内链/书签新标签页 · 垂直标签页 · 自动保存工作区
 - **命令与外观** — 自定义命令 · 隐藏命令 · 状态栏命令 · 右键菜单命令 · 图标选择 · 拖拽排序 · 左功能区管理 · 自动清理失联图片
@@ -34,7 +34,7 @@ MDRazor is an Obsidian plugin dedicated to honing your Markdown editing experien
 
 **English**
 
-- **Editing experience** — Hidden formatting marks · Whitespace visualization · Symbol boundary hint (tooltip `|` aligned with the caret · visible in dark mode) · Mouse/wheel line highlight · Current line highlight · Typewriter mode · Click sync (click/drag misplacement cure, incl. mouseup final correction) · Callout-following-row offset cure (block-widget line-box gap folded into measurement) · Measure guard (stale height-map click-offset cure) · Callout enhancement (single-click keeps rendering · in-place editor · auto-growing body · suggestion dropdown) · Inline code double-click copy · Cursor & scroll position persistence
+- **Editing experience** — Hidden formatting marks · Whitespace visualization · Symbol boundary hint (tooltip `|` aligned with the caret · visible in dark mode) · Mouse/wheel line highlight · Current line highlight · Typewriter mode · Click sync (click/drag misplacement cure, incl. mouseup final correction) · Callout-following-row offset cure (block-widget line-box gap folded into measurement) · Measure guard (stale height-map click-offset cure) · Callout enhancement (single-click keeps rendering · in-place editor · auto-growing body · suggestion dropdown) · Inline code double-click copy · First-line indent (non-body blocks excluded · follows "Strict line breaks" · Live Preview + Reading view) · Cursor & scroll position persistence
 - **Lists & structure** — List integration (list marks / checkboxes / ← selects checkbox character / backspace level promotion) · Enter soft break (any single-character checkbox inheritance) · Focus list item · Fold sibling lists/headings · Fold via list bullet on the active line · Arrow-key traversal of folded items · Folder focus · Folder file count · Markdown-aware empty-line cleanup
 - **Tabs & navigation** — Open in new tab by default · Wikilinks and bookmarks in new tabs · Vertical tabs · Workspace autosave
 - **Commands & appearance** — Custom commands · Hidden commands · Status-bar commands · Context-menu commands · Icon picker · Drag-and-drop ordering · Left-ribbon management · Orphan image cleanup
@@ -60,6 +60,8 @@ MDRazor is an Obsidian plugin dedicated to honing your Markdown editing experien
 - **Callout 增强**（默认开启） — 实时预览下单击 callout 不再退回 `>` 纯文本源码，保持渲染外观；渲染后的 callout 里仍可用鼠标拖选文本，链接/折叠箭头/嵌入块等交互照常工作。点右上角「编辑这个区块」按钮，在保持官方渲染外观（边框/底色/圆角/配色/图标/主题变量全部原样）的前提下就地编辑：标题在官方标题行内输入（字号/颜色/行高逐像素同源），正文复刻 `.callout-content` 的内边距与背景，另有类型/元数据/折叠字段；正文高度随内容自适应增高（窗口缩放等宽度变化自动重算，不再出现滚动条），类型/元数据为「自由输入 + 自带候选下拉」（候选来自内置类型 ∪ 已加载样式表 ∪ 当前文档在用值，限高内部滚动、随编辑器滚动跟随输入框、↑/↓/Enter/Esc 键盘可选）；提交时一次事务把「标题 + 正文」重建为 `> [!类型|元数据]折叠标记 标题` 写回，编辑期间不改文档（widget 不重建、输入不打断），源码区间被外部改动则放弃写回并弹提示，绝不误覆盖。正文粘贴多行文本自动规范化（CRLF 统一、剥已有 `>` 前缀避免 `> >`、去行尾空白）并在提交时逐行补 `>`（空行补 `>` 本身）。
 
 - **行内代码增强**（默认开启） — 双击编辑器中的行内代码（`` `code` ``）时，自动复制其完整内容（不含反引号）到剪贴板，弹出「已复制」提示；原生双击选词等行为完整保留（不 preventDefault、不派发事务），代码内容区间走 CM6 语法树解析（formatting-code 与 inline-code 标记配对，不依赖具体 DOM 结构；语法树未就绪时退回 DOM 边界估算，任何一步失败都放行原生行为）；Shift/Ctrl/Alt/Meta 双击（扩展选词等）、单击与拖选不受影响；围栏代码块天然排除；仅编辑模式（实时预览/源码模式）生效。
+
+- **首行缩进**（默认关闭） — 为**正文段落**的首行添加缩进（宽度 1~2 个中文字符可调，`1em` = 一个中文字符宽），自动排除标题、表格、无序/有序列表、引用与 callout、代码块、数学块、注释、HTML 块、frontmatter、脚注与链接引用定义、独立块 ID、纯图片段落等一切非正文块。**仅实时预览与阅读视图生效，源码模式刻意不生效**（缩进会把源码本身推右，看起来像误输入的空格）。**段落边界跟随 Obsidian 的「严格换行」设置**：非严格（Obsidian 默认，单回车即新行）时每个正文行都是段落首行、都缩进；严格时同段续行不缩进 —— 该设置变化即时生效。作用域收在 Obsidian 自己的正文容器内（编辑器要求 `.markdown-source-view`、阅读视图要求 `.markdown-reading-view`），提词器等借用主题类名的第三方视图不受影响。
 
 - **MD文档光标和滚轴位置持久化** — 设置入口在本模块（功能详见「标签页」节）。
 - **清理本地持久化数据** — 设置入口在本模块（功能详见「数据存储」节；由原「清理本地数据」改名而来）。
@@ -201,7 +203,7 @@ MDRazor is an Obsidian plugin dedicated to honing your Markdown editing experien
 
 在 Obsidian 设置 → 第三方插件 → MDRazor 中配置：
 
-- **通用** — 2 个开关：鼠标/滚轮移动时行高亮、当前行高亮（「MD文档光标和滚轴位置持久化」与「清理本地持久化数据」的设置入口亦在本模块）
+- **通用** — 3 个开关 + 1 个滑块：鼠标/滚轮移动时行高亮、当前行高亮、首行缩进（含缩进宽度滑块，1~2 个中文字符；「MD文档光标和滚轴位置持久化」与「清理本地持久化数据」的设置入口亦在本模块）
 - **隐藏样式** — 13 个开关：加粗、斜体、高亮、删除线、行内代码、转义符号、标题符号、双链符号、HTML 颜色标签、HTML 下划线符号、HTML 行标签、空格可视化、符号边界提示
 - **列表增强** — 12 个开关 + 1 个滑块：列一体化、勾选框一体化、退格提升层级、光标行列表符号折叠、回车软换行、选项聚焦（含二级子项最大展开数、滚轴同步）、上下键默认不跳过被折叠的列表/标题项、目录聚焦、显示目录文件数量（含仅显示直接子项数量）
 - **标签页** — 9 个开关 + 1 个滑块：默认新标签页打开、垂直标签页、展示/隐藏切换标签页视图按钮、新标签页打开双链、新标签页打开书签、目录展开关联标签页、打字机模式（含死区外的不透明度、允许文档头部留存空白区域、死区下沿跳转上沿）
@@ -260,6 +262,8 @@ Features are organized into the eight settings-panel areas; every item has its o
 - **Callout enhancement** (on by default) — single-clicking a callout in Live Preview no longer falls back to the `>` quote source: the rendered look stays, text remains drag-selectable, and links/fold arrows/embeds keep working. The "edit this block" button opens an in-place editor that preserves the official rendering (border, background, radius, colours, icon and theme variables untouched): the title edits inside the official title row (pixel-identical font/colour/line-height), the body replicates the `.callout-content` padding and background, plus type/metadata/fold fields; the body grows with its content (re-fitted on width changes, no scrollbars), and type/metadata combine free input with a custom suggestion dropdown (candidates from built-in types ∪ loaded stylesheets ∪ values used in the document; height-capped with internal scrolling, follows the editor scroll, ↑/↓/Enter/Esc keyboard navigation). Committing writes `> [!type|metadata]fold title` back in a single transaction; nothing is written while editing (the widget is never rebuilt mid-typing), and a changed source range is reported instead of overwritten. Multi-line paste into the body is normalised (CRLF unified, existing `>` prefixes stripped to avoid `> >`, trailing whitespace removed) and every line gets its `>` prefix on commit (blank lines get a bare `>`).
 
 - **Inline code enhancement** (on by default) — double-clicking inline code (`` `code` ``) in the editor copies its full content (without backticks) to the clipboard with a "Copied" notice; native double-click word selection keeps working (no preventDefault, no transactions), the code range is resolved from the CM6 syntax tree (`formatting-code` + `inline-code` mark pairing, no reliance on specific DOM structure; a DOM-boundary fallback when the tree lags, and any failure hands control back to the native behaviour); Shift/Ctrl/Alt/Meta double-clicks, single clicks and drag selections are unaffected; fenced code blocks are excluded naturally; applies in the editor (Live Preview/source mode) only.
+
+- **First-line indent** (off by default) — indents the first line of **body paragraphs** (width adjustable between 1 and 2 CJK characters, `1em` = one CJK character), automatically excluding every non-body block: headings, tables, unordered/ordered lists, blockquotes and callouts, fenced code, math, comments, HTML blocks, frontmatter, footnote and link reference definitions, standalone block IDs, and image-only paragraphs. **Applies to Live Preview and Reading view only; source mode is deliberately excluded** (indenting there pushes the source itself right, looking like stray typed spaces). **Paragraph boundaries follow Obsidian's "Strict line breaks" setting**: in non-strict mode (Obsidian's default, where a single Enter starts a new line) every body line is a paragraph first line and is indented, while strict mode leaves continuation lines of the same paragraph un-indented — changing the setting takes effect immediately. The scope stays inside Obsidian's own body containers (`.markdown-source-view` for the editor, `.markdown-reading-view` for the reading view), so third-party views that borrow the theme's markdown classes (such as a teleprompter) are unaffected.
 
 - **Cursor & scroll position persistence** and **Clear local persisted data** — settings entries live here (see Tabs / Data storage).
 
@@ -323,7 +327,7 @@ Hide Markdown mark symbols, revealed automatically as the cursor passes. Cleaner
 
 ### Settings
 
-Configure in Obsidian → Settings → Community plugins → MDRazor. The eight modules appear as tabs (active tab remembered for the plugin's lifetime): General (2 toggles), Hidden Styling (13), List Enhancement (12 toggles + 1 slider), Tabs (9 toggles + 1 slider), Status Bar (4), Left Ribbon (1), Context Menu (2), Lazy Loading (1 master + per-plugin delays).
+Configure in Obsidian → Settings → Community plugins → MDRazor. The eight modules appear as tabs (active tab remembered for the plugin's lifetime): General (3 toggles + 1 slider), Hidden Styling (13), List Enhancement (12 toggles + 1 slider), Tabs (9 toggles + 1 slider), Status Bar (4), Left Ribbon (1), Context Menu (2), Lazy Loading (1 master + per-plugin delays).
 
 ### Data storage
 

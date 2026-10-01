@@ -14,7 +14,7 @@
  * 它们完全基于 CM6 原生 API 运作。
  */
 
-import { MarkdownView, Plugin } from 'obsidian';
+import { Plugin, type EventRef } from 'obsidian';
 import { tr } from '../i18n';
 import { EditorView } from '@codemirror/view';
 import { MDRazorSettings } from '../model/settings';
@@ -54,6 +54,18 @@ import { registerMouseLineHighlight, applyMouseLineHighlightClass, removeMouseLi
 import { registerCurrentLineHighlight, applyCurrentLineHighlightClass, removeCurrentLineHighlightClass } from './general/current-line-highlight';
 import { registerInlineCodeEnhancer } from './general/inline-code-enhancer';
 import { registerCalloutEnhancer } from './general/callout-enhancer';
+import {
+	firstLineIndentConfig,
+	createFirstLineIndentExtension,
+	registerFirstLineIndent,
+	applyFirstLineIndentClass,
+	removeFirstLineIndentClass,
+} from './general/first-line-indent';
+import {
+	registerFirstLineIndentReading,
+	applyFirstLineIndentReading,
+	removeFirstLineIndentReading,
+} from './general/first-line-indent-reading';
 import { registerMeasureGuard } from './general/measure-guard';
 import { createClickSyncExtension } from './general/click-sync';
 
@@ -166,6 +178,17 @@ export default class MDRazorPlugin extends Plugin {
 		// 「编辑这个区块」按钮在保留官方外观的前提下就地编辑纯文本；粘贴多行自动补 `>`）
 		registerCalloutEnhancer(this, () => this.settings.calloutEnhancer);
 
+		// 注册通用功能：首行缩进（正文段落首行缩进，body 开关类 + CM6 行装饰）
+		registerFirstLineIndent(
+			this,
+			() => this.settings.firstLineIndentEnabled,
+			() => this.settings.firstLineIndentSize,
+		);
+
+		// 注册通用功能：首行缩进的阅读视图逐行缩进（非严格换行下单回车是 <p> 内的
+		// <br>，拿不到 text-indent，只能由 DOM 后处理补占位元素；见该模块注释）
+		registerFirstLineIndentReading(this, () => this.settings.firstLineIndentEnabled);
+
 		// 注册编辑器测量守护（始终开启）：样式注入/晚到字体触发重排时
 		// 强制 requestMeasure 刷新 CM6 行高表，根治「点击行上半部落到上一行」
 		registerMeasureGuard(this);
@@ -183,6 +206,8 @@ export default class MDRazorPlugin extends Plugin {
 		this.registerEditorExtension(createListEnhancerExtension());
 		// 注册打字机模式（光标行居中 + 非当前行淡化）
 		this.registerEditorExtension(createTypewriterExtension());
+		// 注册首行缩进（正文段落首行缩进，仅实时预览；阅读视图走 styles.css）
+		this.registerEditorExtension(createFirstLineIndentExtension());
 		// 注册目录聚焦（非 CM6 扩展 — 直接操作文件列表 DOM）
 		registerDirFocus(this, () => this.settings.dirFocusOption);
 
@@ -231,6 +256,33 @@ export default class MDRazorPlugin extends Plugin {
 		);
 		// 注册 MD 文档光标和滚轴位置持久化（先载入缓存再注册，避免重启后缓存被清空）
 		await registerPositionPersistence(this, () => this.settings.positionPersistenceEnabled);
+
+		// 布局变化（新开 popout / 悬浮编辑器窗口、切换工作区）后，把运行态
+		// （body 开关类 / CSS 变量）补挂到新窗口的 document —— 否则那些窗口里
+		// 的编辑器拿不到样式，用户看到的就是「开关改了不生效」。幂等且开销极低。
+		this.registerEvent(
+			this.app.workspace.on('layout-change', () => {
+				this.applyRuntimeClasses();
+			}),
+		);
+
+		// 「严格换行」设置变化会改变段落边界（单回车算不算新段落），首行缩进的
+		// 行装饰需要重算 —— 否则要等下一次编辑才刷新。Vault 的 config-changed
+		// 事件未进 typings，故经类型收窄订阅（setConfig 与配置文件外部改动都会触发）。
+		this.registerEvent(
+			(
+				this.app.vault as unknown as {
+					on(name: string, cb: (...args: unknown[]) => void): EventRef;
+				}
+			).on('config-changed', (...args: unknown[]) => {
+				if (args[0] === 'strictLineBreaks') {
+					this.repaintAllEditors();
+					// 阅读视图侧同样要重算：严格换行时 <br> 只可能来自显式硬换行
+					// （同一段落，不缩进），占位元素要摘掉
+					applyFirstLineIndentReading();
+				}
+			}),
+		);
 
 		// 注册切换标签页视图命令（verticalTabsEnabled 开启时可绑定快捷键）
 		this.addCommand({
@@ -286,11 +338,15 @@ export default class MDRazorPlugin extends Plugin {
 		// 清理 ribbon 图标（其他清理由 Obsidian 自动完成）
 		this.orphanImageRibbon?.removeRibbon();
 		// 移除「光标所在列表行也可折叠」的 body 开关类（JS 添加，需手动清理）
-		removeListFoldOnActiveLineClass();
+		removeListFoldOnActiveLineClass(this.app);
 		// 移除「鼠标移动时行高亮」的 body 开关类并取消空闲计时器（JS 添加，需手动清理）
-		removeMouseLineHighlightClass();
+		removeMouseLineHighlightClass(this.app);
 		// 移除「当前行高亮」的 body 开关类（JS 添加，需手动清理）
-		removeCurrentLineHighlightClass();
+		removeCurrentLineHighlightClass(this.app);
+		// 移除「首行缩进」的 body 开关类与缩进变量（JS 添加，需手动清理）
+		removeFirstLineIndentClass(this.app);
+		// 移除「首行缩进」在阅读视图里补的占位元素并断开观察器（JS 添加，需手动清理）
+		removeFirstLineIndentReading();
 	}
 
 	/**
@@ -311,9 +367,45 @@ export default class MDRazorPlugin extends Plugin {
 	 */
 	async saveSettings(options?: { forceMirror?: boolean }) {
 		await savePluginSettings(this, this.settings, options);
+		// 落盘之后的「生效」链路必须逐段隔离：任一模块抛错都不能掐断后面几步
+		// ——否则表现为「设置已保存，但插件没反应，重启才生效」，且没有任何报错。
 		this.syncConfig();
 		this.repaintAllEditors();
-		this.dirFileCountRefresher.forceRefresh();
+		try {
+			this.dirFileCountRefresher?.forceRefresh();
+		} catch (e) {
+			console.error('[MDRazor] 目录文件计数刷新失败', e);
+		}
+	}
+
+	/**
+	 * 重新应用「挂在 DOM 上的运行态」：各 body 开关类与 CSS 变量。
+	 *
+	 * 幂等、零副作用，可安全地重复调用。调用时机：
+	 *   - onload / saveSettings（设置变化后即时生效）
+	 *   - workspace layout-change（新开 popout / 悬浮编辑器窗口时补挂，
+	 *     否则那些窗口里的编辑器拿不到样式，看起来「开关没生效」）
+	 *   - 设置面板 display()（打开面板即自愈）
+	 *
+	 * 用 try/catch 逐项隔离：某个模块抛错不应连累其余模块。
+	 */
+	applyRuntimeClasses(): void {
+		const steps: Array<[string, () => void]> = [
+			['光标行列表符号折叠', () => applyListFoldOnActiveLineClass(this.app)],
+			['鼠标移动时行高亮', () => applyMouseLineHighlightClass(this.app)],
+			['当前行高亮', () => applyCurrentLineHighlightClass(this.app)],
+			['首行缩进', () => applyFirstLineIndentClass(this.app)],
+			// 阅读视图的逐行缩进是 DOM 后处理（非严格换行下 <br> 拿不到 text-indent）：
+			// 同一处统一调用，保证开关 / 宽度 / 严格换行变化后即时补或摘占位元素
+			['首行缩进（阅读视图）', () => applyFirstLineIndentReading()],
+		];
+		for (const [name, run] of steps) {
+			try {
+				run();
+			} catch (e) {
+				console.error(`[MDRazor] 应用「${name}」运行态失败`, e);
+			}
+		}
 	}
 
 	/**
@@ -322,12 +414,22 @@ export default class MDRazorPlugin extends Plugin {
 	 * 发送空事务到每个 CM6 EditorView，触发 ViewPlugin.update()，
 	 * 使其从共享配置对象重新读取并重建装饰集合。
 	 * 这样设置开关可即时生效，无需重启 Obsidian。
+	 *
+	 * 注意两点：
+	 *   - 不用 `instanceof MarkdownView` 判定：popout / 悬浮窗口的视图来自
+	 *     另一个 realm，跨 realm 的 instanceof 会失败（Obsidian 因此提供了
+	 *     `Node.instanceOf`）。这里改用鸭子判定：有 CM6 EditorView 就派发。
+	 *   - 单个编辑器抛错（例如恰好处于一次更新中）必须隔离，否则循环中断，
+	 *     后面的编辑器全都拿不到新设置。
 	 */
 	private repaintAllEditors() {
 		this.app.workspace.iterateAllLeaves((leaf) => {
-			if (leaf.view instanceof MarkdownView) {
-				const cm6 = (leaf.view.editor as unknown as { cm: EditorView }).cm;
-				if (cm6) cm6.dispatch({});
+			const cm6 = (leaf.view as unknown as { editor?: { cm?: EditorView } }).editor?.cm;
+			if (!cm6 || typeof cm6.dispatch !== 'function') return;
+			try {
+				cm6.dispatch({});
+			} catch (e) {
+				console.error('[MDRazor] 重绘编辑器失败（已跳过该编辑器）', e);
 			}
 		});
 	}
@@ -368,12 +470,11 @@ export default class MDRazorPlugin extends Plugin {
 		Object.assign(formattingConfig, this.settings);
 		Object.assign(spaceConfig, this.settings);
 		Object.assign(listEnhancerConfig, this.settings);
-		// 「光标所在列表行也可折叠」为 CSS 类驱动，需在设置同步后刷新 body 类
-		applyListFoldOnActiveLineClass();
-		// 「鼠标移动时行高亮」为 body 开关类驱动：设置变化后同步（关闭时立即摘除）
-		applyMouseLineHighlightClass();
-		// 「当前行高亮」为 body 常驻开关类驱动：设置变化后同步（即时生效）
-		applyCurrentLineHighlightClass();
+		// 首行缩进的开关还要同步给 CM6 扩展（它在 update() 里读这个配置对象）
+		firstLineIndentConfig.enabled = this.settings.firstLineIndentEnabled;
+		// 「挂在 DOM 上的运行态」（body 开关类 / CSS 变量）：统一走
+		// applyRuntimeClasses（幂等 + 逐项异常隔离 + 覆盖所有窗口的 document）
+		this.applyRuntimeClasses();
 		Object.assign(typewriterConfig, {
 			mode: this.settings.typewriterMode,
 			opacity: this.settings.typewriterOpacity,

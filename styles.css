@@ -1050,3 +1050,72 @@ body.mdrazor-current-line-highlight .markdown-source-view.mod-cm6 .cm-editor:not
 }
 
 
+/* ── 通用：首行缩进 ──
+ * 需求：为正文段落的首行添加缩进（1~2 个中文字符），排除标题 / 表格 /
+ * 列表 / 引用与 callout / 代码块 / 数学块 / 注释 / HTML 块 / 属性区 /
+ * 脚注等非正文块。
+ *
+ * 两侧分工：
+ *   ① 编辑器（实时预览）：first-line-indent.ts 的 CM6 行装饰**只给段落首行**
+ *      挂 .mdrazor-indent-first-line，缩进由本规则施加。CodeMirror 里没有
+ *      「段落」元素（一段硬换行的正文就是一串 .cm-line），纯 CSS 无法区分
+ *      段落首行与续行 —— 直接给 .cm-line 写 text-indent 会让每一行都缩进。
+ *   ② 阅读视图：正文是真正的 <p>，直接按块选择器缩进；非正文块逐项还原为 0
+ *      （排除规则特异性更高，顺序在后，覆盖生效）。
+ *
+ * 缩进值取自 body 上的 --mdrazor-first-line-indent（JS 按设置写入，单位 em，
+ * 1em = 一个中文字符宽）。整套规则由 body.mdrazor-first-line-indent 限定：
+ * 关闭开关时即时失效，无需等编辑器重绘。
+ *
+ * 作用域限定在**真正的正文区域**：编辑器侧要求 `.markdown-source-view`
+ * 祖先（见 first-line-indent.ts），阅读视图侧要求 `.markdown-reading-view`
+ * 祖先。原因：`markdown-preview-view` / `markdown-rendered` 这两个类常被
+ * 第三方视图借去复用主题样式（例如 Glimpse 的提词器容器就是
+ * `glimpse-tp-content markdown-rendered markdown-preview-view`），
+ * 只用 `.markdown-preview-view p` 会把缩进外溢到那些视图里。
+ *
+ * 段落边界跟随 Obsidian 的「严格换行」设置（非严格 = 默认）：关闭时单个回车
+ * 就是硬换行，实时预览里每行一个 .cm-line、每行都算一段，故每个正文行都会带
+ * 上 .mdrazor-indent-first-line。
+ *
+ * 阅读视图里单个回车只是 <p> 内的一个 <br>，而 <br> 之后的文本**拿不到
+ * text-indent**（实测：br{display:block}、br::after 伪元素不渲染、把 <p> 改成
+ * 纵向 flex 容器、用 block 级 span 切匿名块盒 —— 四种做法全无效），所以那部分
+ * 由 JS 在每个 <br> 之后插入一个空的 inline-block 占位元素撑出缩进
+ * （见 first-line-indent-reading.ts），规则见下方 .mdrazor-indent-spacer。
+ */
+body.mdrazor-first-line-indent .cm-line.mdrazor-indent-first-line,
+body.mdrazor-first-line-indent .markdown-reading-view .markdown-preview-view p {
+	text-indent: var(--mdrazor-first-line-indent, 2em);
+}
+
+/* 阅读视图的逐行缩进占位元素（JS 插入在每个 <br> 之后）：
+ * 空节点 + height:0 → 不进文本内容、不改变段落高度（实测与插入前逐像素一致），
+ * 只把该行之后的文本推右一个缩进宽度。宽度跟随设置变量，改宽度无需重插。 */
+body.mdrazor-first-line-indent .markdown-reading-view .markdown-preview-view .mdrazor-indent-spacer {
+	display: inline-block;
+	width: var(--mdrazor-first-line-indent, 2em);
+	height: 0;
+}
+
+/* 阅读视图排除项：列表项（含任务项）/ 引用与 callout / 表格单元格 /
+ * 图注 / 嵌入笔记内的段落（嵌入属引用内容，与引用块同类）。
+ * 脚注段落位于 .footnotes 的 li 内，已被 li p 覆盖。
+ * 特异性 (0,3,3) 高于基础规则的 (0,3,2)，无需 !important。 */
+body.mdrazor-first-line-indent .markdown-reading-view .markdown-preview-view li p,
+body.mdrazor-first-line-indent .markdown-reading-view .markdown-preview-view blockquote p,
+body.mdrazor-first-line-indent .markdown-reading-view .markdown-preview-view .callout p,
+body.mdrazor-first-line-indent .markdown-reading-view .markdown-preview-view td p,
+body.mdrazor-first-line-indent .markdown-reading-view .markdown-preview-view th p,
+body.mdrazor-first-line-indent .markdown-reading-view .markdown-preview-view figcaption p,
+body.mdrazor-first-line-indent .markdown-reading-view .markdown-preview-view .markdown-embed p,
+body.mdrazor-first-line-indent .markdown-reading-view .markdown-preview-view .markdown-embed-content p {
+	text-indent: 0;
+}
+
+/* 阅读视图：整段只有一张图 / 一个嵌入的 <p> 不缩进（缩进会把图整体推右）。
+ * :has() 的特异性按最具体参数计算，故高于基础规则。 */
+body.mdrazor-first-line-indent .markdown-reading-view .markdown-preview-view p:has(> img:only-child),
+body.mdrazor-first-line-indent .markdown-reading-view .markdown-preview-view p:has(> .internal-embed:only-child) {
+	text-indent: 0;
+}

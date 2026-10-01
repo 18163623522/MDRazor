@@ -209,6 +209,7 @@ export function createCursorBoundaryHintExtension() {
 				private lastLeft = '';
 				private lastRight = '';
 				private lastWhitespace = spaceConfig.showWhitespace;
+				private lastHintEnabled = formattingConfig.symbolBoundaryHint;
 
 				constructor(view: EditorView) {
 					this.decorations = buildDecorations(view);
@@ -217,11 +218,19 @@ export function createCursorBoundaryHintExtension() {
 
 				update(update: ViewUpdate) {
 					this.decorations = buildDecorations(update.view);
+					// 「符号边界提示」开关翻转时必须也走一次 updateHint：设置面板改开关
+					// 只会派发**空事务**（无 selectionSet / docChanged），否则关掉开关后
+					// 已显示的弹框会一直留到下次光标移动。
+					const hintChanged = formattingConfig.symbolBoundaryHint !== this.lastHintEnabled;
+					this.lastHintEnabled = formattingConfig.symbolBoundaryHint;
 					if (
 						update.selectionSet ||
 						update.docChanged ||
-						update.geometryChanged
+						update.geometryChanged ||
+						hintChanged
 					) {
+						// 清掉位置缓存，让 updateHint 内部的「位置/左右文本未变」早退失效
+						if (hintChanged) this.lastPos = null;
 						this.updateHint(
 							update.view,
 							update.view.state.selection.main.head,

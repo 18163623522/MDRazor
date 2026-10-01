@@ -34,7 +34,8 @@
  * 首次事件与行切换时发生。
  */
 
-import { Plugin } from 'obsidian';
+import { Plugin, type App } from 'obsidian';
+import { forEachDocument } from './window-scope';
 
 /** body 上的「活动中」开关类（鼠标移动/滚轮滚动，styles.css 以此限定高亮规则生效） */
 export const MOUSE_MOVING_CLASS = 'mdrazor-mouse-moving';
@@ -187,7 +188,7 @@ export function registerMouseLineHighlight(plugin: Plugin, isEnabled: () => bool
 	plugin.registerDomEvent(window, 'wheel', onWheel, { passive: true });
 	plugin.registerDomEvent(activeDocument, 'scroll', onScroll, { capture: true, passive: true });
 	// 功能开启类随设置同步（默认开启：插件加载后即常驻）
-	if (isEnabled()) activeDocument.body.classList.add(FEATURE_ENABLED_CLASS);
+	if (isEnabled()) forEachDocument(plugin.app, addFeatureEnabledClass);
 	else stopMoving();
 }
 
@@ -195,18 +196,25 @@ export function registerMouseLineHighlight(plugin: Plugin, isEnabled: () => bool
  * 设置变化后同步状态（saveSettings → syncConfig 调用）：
  * 开启时挂「功能开启」类（光标默认箭头，含静止悬停）；关闭时摘除
  * 「功能开启」类 + 摘除「移动中」类并取消计时器，恢复原生光标。
+ *
+ * @param app App 实例：类挂到**所有已打开窗口**的 document（主窗口 + popout）
  */
-export function applyMouseLineHighlightClass(): void {
+export function applyMouseLineHighlightClass(app: App): void {
 	if (isEnabledRef?.()) {
-		activeDocument.body.classList.add(FEATURE_ENABLED_CLASS);
+		forEachDocument(app, addFeatureEnabledClass);
 	} else {
-		activeDocument.body.classList.remove(FEATURE_ENABLED_CLASS);
+		forEachDocument(app, (doc) => doc.body.classList.remove(FEATURE_ENABLED_CLASS));
 		stopMoving();
 	}
 }
 
 /** 插件卸载时清理（body 类与行标记类是由 JS 添加的，需手动摘除） */
-export function removeMouseLineHighlightClass(): void {
-	activeDocument.body.classList.remove(FEATURE_ENABLED_CLASS);
+export function removeMouseLineHighlightClass(app: App): void {
+	forEachDocument(app, (doc) => doc.body.classList.remove(FEATURE_ENABLED_CLASS));
 	stopMoving();
+}
+
+/** 给单个窗口的 body 挂「功能开启」类（供 forEachDocument 复用） */
+function addFeatureEnabledClass(doc: Document): void {
+	doc.body.classList.add(FEATURE_ENABLED_CLASS);
 }

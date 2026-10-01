@@ -33,3 +33,6 @@ skills-lock.json
 
 # Exclude macOS Finder (System Explorer) View States
 .DS_Store
+
+# Hot Reload plugin's local marker file (created in the plugin folder at runtime)
+.hotreload
