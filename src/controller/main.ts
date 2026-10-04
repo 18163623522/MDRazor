@@ -53,7 +53,7 @@ import type { StartupTimingRecorder } from './lazy-load/startup-check';
 import { registerMouseLineHighlight, applyMouseLineHighlightClass, removeMouseLineHighlightClass } from './general/mouse-line-highlight';
 import { registerCurrentLineHighlight, applyCurrentLineHighlightClass, removeCurrentLineHighlightClass } from './general/current-line-highlight';
 import { registerInlineCodeEnhancer } from './general/inline-code-enhancer';
-import { registerCalloutEnhancer } from './general/callout-enhancer';
+import { registerCalloutEnhancer, refreshTouchEditButtons } from './general/callout-enhancer';
 import {
 	firstLineIndentConfig,
 	createFirstLineIndentExtension,
@@ -175,8 +175,13 @@ export default class MDRazorPlugin extends Plugin {
 		registerInlineCodeEnhancer(this, () => this.settings.inlineCodeEnhancer);
 
 		// 注册通用功能：Callout 增强（实时预览下单击 callout 不退回纯文本；
-		// 「编辑这个区块」按钮在保留官方外观的前提下就地编辑纯文本；粘贴多行自动补 `>`）
-		registerCalloutEnhancer(this, () => this.settings.calloutEnhancer);
+		// 「编辑这个区块」按钮在保留官方外观的前提下就地编辑纯文本；粘贴多行自动补 `>`；
+		// 触屏设备常驻编辑按钮）
+		registerCalloutEnhancer(
+			this,
+			() => this.settings.calloutEnhancer,
+			() => this.settings.calloutTouchEditButton,
+		);
 
 		// 注册通用功能：首行缩进（正文段落首行缩进，body 开关类 + CM6 行装饰）
 		registerFirstLineIndent(
@@ -475,6 +480,13 @@ export default class MDRazorPlugin extends Plugin {
 		// 「挂在 DOM 上的运行态」（body 开关类 / CSS 变量）：统一走
 		// applyRuntimeClasses（幂等 + 逐项异常隔离 + 覆盖所有窗口的 document）
 		this.applyRuntimeClasses();
+		// Callout 触屏编辑按钮：开关翻转不会触发 DOM 变化（MutationObserver
+		// 只看新增节点），需显式全量补/摘
+		try {
+			refreshTouchEditButtons();
+		} catch (e) {
+			console.error('[MDRazor] 同步 Callout 触屏编辑按钮失败', e);
+		}
 		Object.assign(typewriterConfig, {
 			mode: this.settings.typewriterMode,
 			opacity: this.settings.typewriterOpacity,

@@ -42,6 +42,11 @@
  *     ↑/↓/Enter/Esc 键盘可选；
  *   - 提交时把「标题 + 正文行」重建为 `> [!type] title` + `> body` 写回文档，
  *     Obsidian 随即重新渲染 callout（编辑面板随 widget 一起被回收）。
+ *   - 触屏设备（iPad 等）没有悬停，Obsidian 原生编辑按钮（仅悬停可见）无法
+ *     呼出——由 MutationObserver 给 widget 注入本插件自有的编辑按钮
+ *     （`TOUCH_EDIT_BUTTON_CLASS`），仅在不具备悬停能力的环境显示；
+ *   - 「取消」按钮与 Esc 丢弃修改关闭面板，「完成」与点击面板外提交——
+ *     原先三条关闭路径全是提交，改错了无法不写回地退出。
  *
  * 编辑期间**不改文档**（只在提交时派发一次事务），避免 Obsidian 重建 widget 把
  * 编辑面板销毁、打断输入。代价：若编辑期间 widget 因外部原因被重建，未提交的
@@ -55,9 +60,10 @@
  * CM6 粘贴兜底：光标位于 callout 源码行首且粘贴多行时，同样按 `>` 前缀展开。
  */
 
-import { Notice, Plugin } from 'obsidian';
+import { Notice, Plugin, setIcon } from 'obsidian';
 import { EditorView } from '@codemirror/view';
 import type { Extension } from '@codemirror/state';
+import { CALLOUT_HEADER_RE, isQuoteLine, stripQuotePrefix } from './callout-parse';
 import { tr } from '../../i18n';
 
 /** 实时预览 callout 块 widget（Obsidian 自身类名，勿改） */
@@ -96,13 +102,26 @@ const EDITING_CLASS = 'mdrazor-callout-editing';
  */
 const WIDGET_EDITING_CLASS = 'mdrazor-callout-widget-editing';
 
-/** callout 首行：可选缩进 + `>` + `[!type]` + 可选折叠标记 + 可选标题 */
-const CALLOUT_HEADER_RE = /^(\s*>\s?)\[!([^\]]+)\]([+-]?)\s?(.*)$/;
-/** 引用行（用于确定 callout 源码区间边界） */
-const QUOTE_LINE_RE = /^\s*>/;
+/**
+ * 本插件自有的「编辑这个区块」按钮（挂在 callout widget 上）。
+ *
+ * Obsidian 原生按钮（.edit-block-button）的显示由 `.embed-actions` 容器的
+ * `opacity: 0` 控制（app.css 实证），仅在 hover 时恢复——触屏设备（iPad 等）
+ * 没有 hover，按钮不可见；且 opacity 作用于**容器**，用户对按钮本身写
+ * `opacity: 1 !important` 也救不回来（opacity: 0 的父级把整个子树绘制成
+ * 全透明，但 hit-testing 仍在——按钮「看不见却摸得着」）。
+ * 本按钮仅在不具备 hover 能力的环境（styles.css 的
+ * `@media (hover: none) and (pointer: coarse)`）显示，桌面 hover 环境继续用
+ * 原生按钮，外观零变化。
+ */
+const TOUCH_EDIT_BUTTON_CLASS = 'mdrazor-callout-touch-edit-button';
+
+/** callout 首行：可选缩进 + `>` + `[!type]` + 可选折叠标记 + 可选标题 —— 见 callout-parse.ts */
 
 /** 设置读取器（registerCalloutEnhancer 传入；null = 尚未注册） */
 let isEnabledRef: (() => boolean) | null = null;
+/** 「触屏编辑按钮」子开关读取器（registerCalloutEnhancer 传入） */
+let isTouchButtonEnabledRef: (() => boolean) | null = null;
 
 /** callout 源码解析结果 */
 interface CalloutSource {
@@ -162,12 +181,20 @@ let session: CalloutSession | null = null;
  *
  * 捕获阶段监听 mousedown / click：既阻止「单击 callout 退回纯文本」，
  * 也接管「编辑这个区块」按钮。CM6 粘贴扩展作为 `>` 补全的兜底路径。
+ * 另挂 MutationObserver 为 callout widget 注入触屏编辑按钮（见
+ * TOUCH_EDIT_BUTTON_CLASS 注释——原生按钮仅悬停可见，触屏无法呼出）。
  *
- * @param plugin    Plugin 实例（registerDomEvent / registerEditorExtension 保证卸载时清理）
- * @param isEnabled 设置读取器（开关切换无需重注册）
+ * @param plugin               Plugin 实例（registerDomEvent / registerEditorExtension 保证卸载时清理）
+ * @param isEnabled            设置读取器（开关切换无需重注册）
+ * @param isTouchButtonEnabled 「触屏编辑按钮」子开关读取器
  */
-export function registerCalloutEnhancer(plugin: Plugin, isEnabled: () => boolean): void {
+export function registerCalloutEnhancer(
+	plugin: Plugin,
+	isEnabled: () => boolean,
+	isTouchButtonEnabled: () => boolean,
+): void {
 	isEnabledRef = isEnabled;
+	isTouchButtonEnabledRef = isTouchButtonEnabled;
 
 	// 捕获阶段：必须早于 Obsidian 挂在 .cm-content 上的处理器与它自己的 click 钩子
 	plugin.registerDomEvent(
@@ -183,6 +210,34 @@ export function registerCalloutEnhancer(plugin: Plugin, isEnabled: () => boolean
 		{ capture: true },
 	);
 
+	// 触屏编辑按钮注入：widget 由 Obsidian 频繁重建（光标/编辑每次都可能重建），
+	// 增量观察新增节点，出现 widget 就补按钮（幂等）；开关关闭时顺手摘除。
+	// 挂 containerEl：主窗口全部编辑器都在其内。popout 的独立窗口不覆盖——
+	// 触屏设备（该按钮的目标环境）没有 popout，桌面有原生 hover 按钮。
+	// removedNodes 不处理：按钮随 widget 移除自然消失，无泄漏。
+	const observer = new MutationObserver((mutations) => {
+		for (const mutation of mutations) {
+			for (const node of Array.from(mutation.addedNodes)) {
+				// instanceOf 是跨窗口安全的 instanceof（popout 窗口的节点也能正确判定）
+				if (!node.instanceOf(Element)) continue;
+				const widget = node.matches(CALLOUT_WIDGET_SELECTOR)
+					? (node as HTMLElement)
+					: node.closest<HTMLElement>(CALLOUT_WIDGET_SELECTOR);
+				if (widget) {
+					ensureTouchEditButton(widget);
+					continue;
+				}
+				for (const w of Array.from(
+					node.querySelectorAll<HTMLElement>(CALLOUT_WIDGET_SELECTOR),
+				)) {
+					ensureTouchEditButton(w);
+				}
+			}
+		}
+	});
+	observer.observe(plugin.app.workspace.containerEl, { childList: true, subtree: true });
+	plugin.register(() => observer.disconnect());
+
 	plugin.registerEditorExtension(createCalloutPasteExtension());
 
 	// 主题/片段变更后候选值（类型 / 元数据）可能变化，失效缓存以便下次重扫
@@ -191,6 +246,44 @@ export function registerCalloutEnhancer(plugin: Plugin, isEnabled: () => boolean
 	);
 
 	plugin.register(() => closeSession(false));
+}
+
+/**
+ * 确保 callout widget 上有（或没有）触屏编辑按钮，幂等。
+ *
+ * 开关开启且缺按钮时注入；开关关闭时移除已有按钮。按钮不挂任何监听器：
+ * 点击统一由 handleClick 的捕获分支处理（containerEl 上的捕获先于一切
+ * 冒泡），因此无需清理事件监听。
+ */
+function ensureTouchEditButton(widget: HTMLElement): void {
+	const active = Boolean(isEnabledRef?.()) && Boolean(isTouchButtonEnabledRef?.());
+	const existing = widget.querySelector('.' + TOUCH_EDIT_BUTTON_CLASS);
+	if (!active) {
+		existing?.remove();
+		return;
+	}
+	if (existing) return;
+	const btn = widget.createEl('button', { cls: TOUCH_EDIT_BUTTON_CLASS });
+	btn.setAttribute('type', 'button');
+	btn.setAttribute('aria-label', tr('编辑这个区块', 'Edit this block'));
+	setIcon(btn, 'pencil');
+}
+
+/**
+ * 全量重扫主窗口所有 callout widget，按当前开关补/摘触屏编辑按钮。
+ *
+ * 由 controller/main.ts 的 syncConfig() 在每次设置保存后调用：
+ * 「触屏编辑按钮」开关切换即时生效（MutationObserver 只看新增节点，
+ * 开关翻转不会触发 DOM 变化，需要这里显式刷新）。
+ */
+export function refreshTouchEditButtons(): void {
+	const container = isEnabledRef ? document.querySelector('.workspace') : null;
+	if (!container) return;
+	for (const widget of Array.from(
+		container.querySelectorAll<HTMLElement>(CALLOUT_WIDGET_SELECTOR),
+	)) {
+		ensureTouchEditButton(widget);
+	}
 }
 
 /**
@@ -261,7 +354,7 @@ function handleMouseDown(event: MouseEvent): void {
 	if (target.closest(`.${EDITOR_ROOT_CLASS}`)) return;
 	const widget = resolveCalloutWidget(target, event);
 	if (!widget) return;
-	if (!target.closest(EDIT_BLOCK_BUTTON_SELECTOR) && interactiveInside(target, widget)) {
+	if (!target.closest(EDIT_BLOCK_BUTTON_SELECTOR) && !target.closest('.' + TOUCH_EDIT_BUTTON_CLASS) && interactiveInside(target, widget)) {
 		return;
 	}
 	// 仅阻断传播，不 preventDefault（保留原生文本选择）
@@ -284,6 +377,17 @@ function handleClick(event: MouseEvent): void {
 
 	if (target.closest(EDIT_BLOCK_BUTTON_SELECTOR)) {
 		// 阻止 Obsidian hookClickHandler → selectElement() 派发整段选区
+		event.preventDefault();
+		event.stopPropagation();
+		const view = viewFromElement(widget);
+		if (view) openEditor(view, widget);
+		return;
+	}
+
+	// 本插件自有的触屏编辑按钮（TOUCH_EDIT_BUTTON_CLASS）：与原生按钮同义。
+	// 按钮 DOM 在 widget 内（button 命中 INTERACTIVE_SELECTOR 的 `button`），
+	// 必须在 interactiveInside 放行之前分流。
+	if (target.closest('.' + TOUCH_EDIT_BUTTON_CLASS)) {
 		event.preventDefault();
 		event.stopPropagation();
 		const view = viewFromElement(widget);
@@ -318,11 +422,6 @@ function viewFromElement(el: HTMLElement): EditorView | null {
 	}
 }
 
-/** 该行是否为引用行 */
-function isQuoteLine(text: string): boolean {
-	return QUOTE_LINE_RE.test(text);
-}
-
 /**
  * 解析包含 pos 的 callout 源码区间。
  *
@@ -352,7 +451,7 @@ function parseCalloutAt(view: EditorView, pos: number): CalloutSource | null {
 
 	const body: string[] = [];
 	for (let n = first + 1; n <= last; n++) {
-		body.push(doc.line(n).text.replace(/^\s*>\s?/, ''));
+		body.push(stripQuotePrefix(doc.line(n).text));
 	}
 
 	return {
@@ -411,7 +510,7 @@ export function normalizeBodyText(text: string): string[] {
 	return text
 		.replace(/\r\n?/g, '\n')
 		.split('\n')
-		.map((l) => l.replace(/^\s*>\s?/, '').replace(/\s+$/, ''));
+		.map((l) => stripQuotePrefix(l).replace(/\s+$/, ''));
 }
 
 /**
@@ -618,6 +717,10 @@ function openEditor(view: EditorView, widgetEl: HTMLElement): void {
 	}
 
 	const actions = rootEl.createDiv({ cls: 'mdrazor-callout-editor-actions' });
+	// 取消（丢弃修改并关闭）：触屏用户的补漏——原先 Done / 点面板外 / Esc
+	// 全是提交，改错了没有任何不写回的退出路径
+	const cancelBtn = actions.createEl('button', { cls: 'mdrazor-callout-editor-cancel' });
+	cancelBtn.setText(tr('取消', 'Cancel'));
 	const doneBtn = actions.createEl('button', { cls: 'mdrazor-callout-editor-done' });
 	doneBtn.setText(tr('完成', 'Done'));
 
@@ -629,7 +732,7 @@ function openEditor(view: EditorView, widgetEl: HTMLElement): void {
 	// 否则按渲染态 200px 宽的 widget 折行，首测高度虚高
 	fitBodyHeight(bodyInput);
 
-	const dispose = attachEditorListeners({ calloutEl, titleInput, bodyInput, doneBtn });
+	const dispose = attachEditorListeners({ calloutEl, titleInput, bodyInput, cancelBtn, doneBtn });
 
 	session = {
 		view,
@@ -792,8 +895,8 @@ function addField(
 			return;
 		}
 		if (event.key === 'Escape' && isOpen()) {
-			// 下拉展开时 Esc 只关下拉（阻断冒泡：面板级 Esc 是「提交并关闭
-			// 整个会话」）；已关闭时放行冒泡，维持面板原有提交行为
+			// 下拉展开时 Esc 只关下拉（阻断冒泡：面板级 Esc 是「取消并关闭
+			// 整个会话」）；已关闭时放行冒泡，维持面板原有取消行为
 			event.preventDefault();
 			event.stopPropagation();
 			close();
@@ -814,9 +917,10 @@ function attachEditorListeners(parts: {
 	calloutEl: HTMLElement;
 	titleInput: HTMLInputElement;
 	bodyInput: HTMLTextAreaElement;
+	cancelBtn: HTMLButtonElement;
 	doneBtn: HTMLButtonElement;
 }): () => void {
-	const { calloutEl, titleInput, bodyInput, doneBtn } = parts;
+	const { calloutEl, titleInput, bodyInput, cancelBtn, doneBtn } = parts;
 
 	// 阻止面板事件冒泡进 CM6（含 Obsidian 自己的捕获监听器）。
 	// 挂在 `.callout` 上而非面板根节点：标题输入框位于官方 `.callout-title` 内，
@@ -875,11 +979,12 @@ function attachEditorListeners(parts: {
 	const bodyResizeObserver = new ResizeObserver(fitBody);
 	bodyResizeObserver.observe(bodyInput);
 
-	// Esc 提交并关闭；标题框回车跳到正文
+	// Esc 取消（丢弃修改并关闭）；标题框回车跳到正文。
+	// 保存路径是「完成」按钮与点击面板外部；Esc 作为「退出」键与取消按钮同义。
 	const onKeyDown = (event: KeyboardEvent): void => {
 		if (event.key === 'Escape') {
 			event.preventDefault();
-			closeSession(true);
+			closeSession(false);
 			return;
 		}
 		if (event.key === 'Enter' && event.target === titleInput) {
@@ -898,6 +1003,13 @@ function attachEditorListeners(parts: {
 		closeSession(true);
 	};
 	doneBtn.addEventListener('click', onDone);
+
+	const onCancel = (event: MouseEvent): void => {
+		event.preventDefault();
+		event.stopPropagation();
+		closeSession(false);
+	};
+	cancelBtn.addEventListener('click', onCancel);
 
 	// 点击面板外部提交（捕获阶段，先于 CM6/Obsidian 的处理）。
 	// 判据用 `.callout`：标题输入框与正文文本域都在它内部。
@@ -918,6 +1030,7 @@ function attachEditorListeners(parts: {
 		bodyResizeObserver.disconnect();
 		calloutEl.removeEventListener('keydown', onKeyDown);
 		doneBtn.removeEventListener('click', onDone);
+		cancelBtn.removeEventListener('click', onCancel);
 		doc.removeEventListener('mousedown', onOutsidePointer, true);
 	};
 }
@@ -949,7 +1062,7 @@ function fitBodyHeight(el: HTMLTextAreaElement): void {
 
 /**
  * 关闭会话。commit 为真时把编辑内容写回文档（一次事务），
- * 否则仅拆除面板（插件卸载等场景）。
+ * 否则仅拆除面板（取消 / 插件卸载等场景），不写回。
  */
 function closeSession(commit: boolean): void {
 	const s = session;

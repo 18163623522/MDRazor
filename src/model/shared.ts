@@ -6,6 +6,7 @@
 
 import { EditorView } from '@codemirror/view';
 import { syntaxTree } from '@codemirror/language';
+import type { SyntaxNodeRef } from '@lezer/common';
 import { MDRazorSettings, DEFAULT_SETTINGS } from './settings';
 
 /**
@@ -50,17 +51,49 @@ export function getCurrentAtomicRanges(): readonly AtomicRange[] {
  *
  * 两种原子单元：
  *   1. 列表标记（`formatting-list` 节点，如 `- `、`1. `）—— 由「列一体化」
- *      控制；HyperMD 的该节点已包含尾随空格，`node.from` → `node.to` 正是
- *      要保护的范围。
+ *      控制；HyperMD 的该节点会把标记之后的全部连续空白一并吞入，而
+ *      Obsidian 原生的列表行判定（任务行正则 `^([>\s]*)(([*+-] |(\d+)([.)] ))…`）
+ *      里「格式」只是标记 + 恰好一个空格，故经 `shrinkListMarkerRange`
+ *      收缩到该边界——标记后的多余空白退回普通文本，光标可逐格左移、
+ *      退格逐格删除，不被原子单元吞并。
  *   2. 任务勾选框标记（`formatting-task` 节点，如 `[ ]`、`[x]`）—— 由
- *      「勾选框一体化」控制。若其同行紧邻列表标记，则两个节点合并为
+ *      「勾选框一体化」控制。若其同行**紧邻**列表标记，则两个节点合并为
  *      一个整体区间（`- [ ]` 视为一个整体），并吞入紧随其后的一个空格
- *      （与列表标记节点含尾随空格的语义一致，保证内容起点 Backspace
- *      一次即可整体删除）。
+ *      （与列表标记含尾随空格的语义一致，保证内容起点 Backspace
+ *      一次即可整体删除）。原生任务行正则要求勾选框紧跟「标记 + 一个
+ *      空格」，故标记与勾选框之间存在多余空白时不合并（此时 Obsidian
+ *      也不渲染复选框 widget）。
  *
  * @param view  当前的 EditorView
  * @returns     原子区间数组（两个开关均关闭时返回空数组）
  */
+/**
+ * 收缩列表标记区间的尾随空白。
+ *
+ * HyperMD 的 `formatting-list` 节点会把标记之后的全部连续空白一并吞入
+ * （`-   foo` 的节点覆盖 `-   `）。若照原样作为原子区间，多余空白会被
+ * 判为「列表格式的一部分」：光标一落入即被纠正推到所有空白之后（←
+ * 退不回空格左边），退格也被扩展成连标记带全部空白一并清除。
+ *
+ * 原生任务行正则（asar 实证 `^([>\s]*)(([*+-] |(\d+)([.)] ))…`）给出的
+ * 「格式」边界是标记 + 恰好一个空格，因此把区间收缩到该边界，多余空白
+ * 退回普通文本。仅当节点文本确为「标记本体 + ≥2 个空白」时收缩；其余
+ * 形态（无尾随空白、解析异常）原样保留。
+ *
+ * @param view  当前的 EditorView
+ * @param node  `formatting-list` 叶节点（从标记字符起，不含行首缩进）
+ * @returns     收缩后的原子区间
+ */
+function shrinkListMarkerRange(view: EditorView, node: SyntaxNodeRef): AtomicRange {
+	const text = view.state.doc.sliceString(node.from, node.to);
+	const match = /^([-*+]|\d+[.)])([ \t]+)$/.exec(text);
+	const trailing = match?.[2];
+	if (trailing && trailing.length > 1) {
+		return { from: node.from, to: node.to - (trailing.length - 1) };
+	}
+	return { from: node.from, to: node.to };
+}
+
 export function buildAtomicRanges(view: EditorView): AtomicRange[] {
 	if (!listEnhancerConfig.listIntegration && !listEnhancerConfig.checkboxIntegration) return [];
 
@@ -75,7 +108,7 @@ export function buildAtomicRanges(view: EditorView): AtomicRange[] {
 
 			// ── 列表标记（- / 1. 等）──
 			if (listEnhancerConfig.listIntegration && typeName.includes('formatting-list')) {
-				listRanges.push({ from: node.from, to: node.to });
+				listRanges.push(shrinkListMarkerRange(view, node));
 				return undefined;
 			}
 
@@ -101,15 +134,15 @@ export function buildAtomicRanges(view: EditorView): AtomicRange[] {
 				let to = node.to;
 
 				// 与同行、紧邻其前的列表标记合并为一个整体（- [ ]）。
+				// 必须紧邻（r.to === node.from）：原生任务行正则要求勾选框
+				// 紧跟「标记 + 一个空格」，标记与勾选框之间存在多余空白时
+				// （`-   [ ]`）Obsidian 不渲染复选框，合并反而会把多余空白
+				// 吞回原子区间，复现 ← 卡死 / 退格连删。
 				// iterate 按文档序访问，formatting-list 节点先于
 				// formatting-task 进入，listRanges 此时已收集完毕。
 				if (listEnhancerConfig.listIntegration) {
 					for (const r of listRanges) {
-						if (
-							r.to <= node.from &&
-							view.state.doc.lineAt(r.from).number === line.number &&
-							/^[ \t]*$/.test(view.state.doc.sliceString(r.to, node.from))
-						) {
+						if (r.to === node.from && view.state.doc.lineAt(r.from).number === line.number) {
 							from = r.from;
 							break;
 						}

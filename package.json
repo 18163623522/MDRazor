@@ -1,6 +1,6 @@
 {
 	"name": "obsidian-mdrazor",
-	"version": "2.6.7",
+	"version": "2.6.8",
 	"description": "MDRazor - An Obsidian plugin for enhanced markdown editing",
 	"main": "main.js",
 	"type": "module",
@@ -9,7 +9,9 @@
 		"build": "tsc -noEmit -skipLibCheck && node esbuild.config.mjs production",
 		"version": "node version-bump.mjs && git add manifest.json versions.json",
 		"lint": "eslint .",
-		"verify:indent": "node scripts/verify-first-line-indent.mjs"
+		"verify:indent": "node scripts/verify-first-line-indent.mjs",
+		"verify:list": "node scripts/verify-list-integration.mjs",
+		"verify:callout": "node scripts/verify-callout-parse.mjs"
 	},
 	"keywords": [],
 	"license": "0-BSD",

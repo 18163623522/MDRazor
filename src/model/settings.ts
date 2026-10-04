@@ -27,6 +27,11 @@ export interface MDRazorSettings {
 	 *  保持渲染外观；「编辑这个区块」按钮在保持渲染的前提下进入纯文本编辑，
 	 *  且粘贴多行文本时自动为后续行补全 `>` 前缀并校验 */
 	calloutEnhancer: boolean;
+	/** Callout 触屏编辑按钮：在不具备悬停能力的设备（iPad 等）上常驻显示
+	 *  callout 右上角的编辑按钮。原生「编辑这个区块」按钮由容器 opacity: 0
+	 *  控制显示（仅悬停恢复），触屏设备无法呼出；桌面悬停环境不显示本按钮，
+	 *  原生按钮照常 */
+	calloutTouchEditButton: boolean;
 	/** 首行缩进：为正文段落的首行添加缩进（仅实时预览与阅读视图生效）。
 	 *  默认关闭。标题、表格、列表、引用与 callout、代码块、数学块、注释、
 	 *  HTML 块、frontmatter、脚注与链接引用定义、独立块 ID、纯图片段落
@@ -192,6 +197,7 @@ export const DEFAULT_SETTINGS: MDRazorSettings = {
 
 	inlineCodeEnhancer: true,
 	calloutEnhancer: true,
+	calloutTouchEditButton: true,
 
 	firstLineIndentEnabled: false,
 	firstLineIndentSize: 2,

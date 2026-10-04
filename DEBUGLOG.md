@@ -4,6 +4,66 @@
 
 ---
 
+## 2.6.8 (2026-10-04)
+
+### Callout 编辑器：触屏不可达 / 空正文 / 无取消路径（iPad 用户报告）
+
+一位 iPad（iPadOS + Magic Keyboard）用户在 2.6.7 上试用的第一天反馈了四个问题，前三个属实并已修复，第四个（float 浮动 callout 的几何映射失效）是已知限制、报告者本人也只是备注，未改动。
+
+**问题 1：编辑按钮在触屏设备上不可见（主问题），且用户 CSS 救不回来**
+
+*现象：* 就地编辑器唯一入口是 Obsidian 原生的 `.edit-block-button`，只在悬停时出现；iPad 没有悬停，按钮永远不可见——但仍可点击（盲点 callout 右上角能打开编辑器）。报告者尝试用自定义片段强制显示：对 `.edit-block-button` 写 `opacity: 1 !important`、`display/visibility/background: red !important` 全部无效（对照组规则正常生效），结论「没有任何文档 CSS 能碰到这个按钮」。
+
+*根因（asar 实证 app.css）：* 按钮挂在 `.embed-actions` 容器上，容器默认 **`opacity: 0`**（`.markdown-source-view.mod-cm6 .embed-actions`），仅悬停恢复。两个细节让报告者的现象完全自洽：① opacity 作用于**容器**，对子元素（按钮）写 `opacity: 1` 救不回来——父级 opacity: 0 把整个子树绘制成全透明，`background: red` 也看不见；② opacity 不参与 hit-testing 排除，所以按钮「看不见却摸得着」。他改错了元素，但无从知晓——没有 devtools 的话这确实无法定位。
+
+*修法：* 插件自有的编辑按钮（`mdrazor-callout-touch-edit-button`，铅笔图标 `setIcon(btn, 'pencil')`），由 `MutationObserver` 增量注入到 callout widget（widget 会被 Obsidian 频繁重建，新增节点里出现就补，幂等；`node.instanceOf(Element)` 跨 realm 安全判定）。显示交给 CSS 媒体查询：`@media (hover: none) and (pointer: coarse)` 才 `display: flex`（iPad/手机成立；桌面触屏本 primary pointer 是鼠标、不成立）——桌面悬停环境零变化，原生按钮照常。位置与原生按钮一致（widget 右上角内侧，widget 由核心设 `position: relative` 可作定位锚；按钮整体在 widget 盒内，不受核心 `contain: paint` 裁剪影响）。点击统一走 `handleClick` 捕获分支（新增插件按钮分支，须排在 `interactiveInside` 放行之前——按钮是 `button` 元素会被交互元素选择器命中）；`handleMouseDown` 同步排除该按钮，否则 CM6 会把光标放进 widget 源码区间触发重建。按钮不挂任何监听器（全靠捕获分支），无清理负担。开关切换不会触发 DOM 变化，故 `syncConfig()` 里显式调 `refreshTouchEditButtons()` 全量补/摘；对应新增设置项「Callout 触屏编辑按钮」（`calloutTouchEditButton`，默认开启）。
+
+**问题 2：特定 callout 的编辑面板打开成空正文**
+
+*现象：* 标题/类型解析正确、正文文本域为空；其他 callout 正常。提交空正文不会删掉源码正文（`parseCalloutFromWidget` 找不到正文时区间收窄到标题行），但「打开的编辑器与源码不符」本身很误导。
+
+*根因：* 解析用 `^\s*>` 判定引用行、扩展 callout 源码区间。JS 的 `\s` **不含** ZWSP（U+200B）、ZWNJ、ZWJ、word joiner（U+2060）、软连字符（U+00AD）这一族——从网页复制的正文行首混入后，该行不再被认作引用行，区间扩展与正文收集提前终止，正文静默丢失；而 Obsidian 的渲染管线不受影响，块仍带正文渲染。报告者猜的就是这个（「an invisible character (e.g. zero-width space) at the start of the body line」）。
+
+*修法：* 行文本级判定/剥离抽成纯函数层 `src/controller/general/callout-parse.ts`（`CALLOUT_HEADER_RE` / `QUOTE_LINE_RE` / `isQuoteLine` / `stripQuotePrefix`），行首统一容忍 `\p{Cf}`（Unicode 格式字符类，零宽一族全覆盖，还天然包含 LRM/RLM 等同类隐形污染）。用属性转义而非 `[\u200b\u200c\u200d…]` 枚举：裸 ZWJ 在字符类里会触发 eslint `no-misleading-character-class`（防 emoji 组合误配的规则，此处语义恰恰要匹配裸字符），`\p{Cf}` 既准确又无误报。语义边界全部保持：`>` 后至多剥一个字符（`>   foo` 仍保留缩进对齐）、正文零宽字符原样保留不吞、头部 `prefix` 捕获组含零宽字符时提交按原样写回。新回归 `scripts/verify-callout-parse.mjs`（28 项：普通/缩进/紧凑引用行、六种行首污染形态、剥前缀边界、头部各捕获组）。
+
+**问题 3：没有任何取消路径**
+
+*现象：* 「完成」按钮、点击面板外、Esc 全部提交（`closeSession(true)`），改错了无法不写回地退出。
+
+*修法：* 编辑面板新增「取消」按钮（次要样式，`closeSession(false)` 拆面板不写回），Esc 同步改为取消——Esc 作为「退出」键与取消同义，「完成」按钮与点击面板外保持提交路径不变（就地编辑的「点外部顺手保存」语义保留）。
+
+**避坑记录：**
+
+1. **「CSS 打不动」先查作用元素是不是它自己** —— 报告者的三条规则全都打在按钮上，而透明化的是父容器。opacity 是 paint 层属性：父级 0，子级任何显式值都无效；同时 opacity 不像 `visibility`/`display` 那样参与 hit-testing 的排除。「看得见的按钮点不到 / 看不见的按钮点得到」两类症状都能由父级 opacity 造出来，排查时先一层层向上找 opacity/visibility，再怀疑选择器优先级。
+2. **`\s` 不含零宽一族是 JS 的真实缺口** —— `\s` 覆盖 U+2000–U+200A 与 U+FEFF，却不含 U+200B–U+200D/U+2060/软连字符，而这三类恰是网页复制最常见的污染。「按空白剪裁」的逻辑（正则、`trim`、split）遇到它们都会漏，涉及「识别结构行」的判定应统一用 `\p{Cf}` 宽容化。
+3. **`\p{Cf}` 属性转义是零宽字符类的正解** —— 枚举裸 ZWJ 会撞 no-misleading-character-class（对字面量正则**和** `new RegExp` 的字符串参数都生效，换动态构造躲不掉），disable 注释三处又啰嗦；`\p{Cf}` 一并覆盖同性质的 LRM/RLM/双向隔离符，语义上「容忍隐形格式字符」本就该是全集。
+4. **编辑器内注入 UI 的两处既有约束**：`node.instanceOf(Element)` 而非 `instanceof`（popout 跨 realm）；插件按钮在 `handleClick` 里必须排在 `interactiveInside` 之前分流（`button` 会被交互元素选择器命中而提前放行）。
+
+### 列一体化：列表标记后的多余空格被误判为「格式的一部分」（← 退不回、退格连删）
+
+**现象：** 用户实测，列表标记 `- ` 或 `1. ` 后面直接接若干空格时，这些空格也会被判断为列表格式的一部分——按 ← 光标无法退回空格左边（卡死在所有空格之后），按退格则连列表标记和全部空格一并清除。
+
+**根因：** HyperMD 的 `formatting-list` 节点会把标记之后的**全部连续空白**一并吞进节点（`-   foo` 的节点覆盖 `-   ` 而不止 `- `）。`buildAtomicRanges` 原样取 `node.from → node.to` 作原子区间，于是多余空格进了原子单元：
+
+1. **← 卡死** — 光标纠正把区间内（含左端点）的光标一律推到区间右端点，而 ← 移动落点落在区间内即被推回（2.6.6 已记录「← 在原子区间右边界是死键」的设计）。单空格时死键区就是 `- ` 本身；多空格时**所有多余空格都被并入死键区**，光标退不过任何一个空格。
+2. **退格连删** — 空白前缀前推分支与 `expandDeletion` 都以区间右端点为删除终点，一次退格扩展成「行首缩进 + 标记 + 全部空格」整体删除；「退格提升层级」的提升链也在这个（被撑大的）右端点上误触。
+
+判据对照：asar 实证的原生任务行正则 `^([>\s]*)(([*+-] |(\d+)([.)] ))(?:\[(.)\] )?)?` 给出的「格式」边界是**标记 + 恰好一个空格**——多余空白在原生语义里就是普通文本，不该被原子单元吞并。
+
+**修法（`src/model/shared.ts`）：**
+
+1. 新增 `shrinkListMarkerRange`：`formatting-list` 区间若确为「标记本体 + ≥2 个空白」（正则 `^([-*+]|\d+[.)])([ \t]+)$`），收缩到「标记 + 1 个空白」；无尾随空白（空列表项 `-`）与解析异常原样保留。收缩后多余空格退回普通文本：← 可逐格左移到 `- |`（标记本体仍不可进入，与单空格行为一致），退格逐格删空格、到 `- |` 才触发整体删除或提升链。
+2. 勾选框合并条件从「标记与勾选框之间允许空白」收紧为**紧邻**（`r.to === node.from`）。否则 `-   [ ] foo` 会把多余空白吞回合并区间、复现同款问题——而该写法下原生任务行正则匹配不到勾选框组（`]` 前的空格链破坏 `([*+-] )(\[(.)\] )` 的衔接），Obsidian 本就不渲染复选框 widget；不合并后中间空格可正常编辑，勾选框区间的「← 选中状态字符」手势照常可用。
+
+**连锁推演与避坑记录：**
+
+1. **六个消费方逐个过了一遍**：光标纠正（多余空格不再强制推光标，正是修复目标）、`expandDeletion`（光标在多余空格间退格不再与区间相交，走原生逐格删）、`resolveBoundaryAction`（只在收缩后的 `r.to` 命中，不再被多余空格撑大误触）、`selectCheckboxStatusChar`（合并区间构造不变）、Delete 键（区间后是内容首字符，本就不相交）、空白前缀前推分支（`delTo = r.to` 跟随收缩值；该分支的常规触发路径本就不可达——光标纠正含左端点后，光标停不到「缩进与标记之间」，此处属防御性代码）。`nudgeOutOfAtomicRanges` 是无调用方的死代码未动；`enter-soft-break` 直接读语法树不经原子区间，不受影响。
+2. **多空格空列表项 `-   ` 的退格语义**：不再是一次归并上行，而是逐格删空格、到 `- |` 触发整体删除并归并——与「多余空格是普通文本」的语义自洽，也与单空格空项的路径一致。
+3. **回归脚本（`scripts/verify-list-integration.mjs`）用手工语法树桩跑 `buildAtomicRanges`**：Obsidian 的语法树来自内置 HyperMD 流式解析器、离线不可得，按 asar 实证的节点形态（formatting-list 从标记字符起、吞全部尾随空白；formatting-task 为 `[·]` 三字符）构造最小 `iterate` 桩。打包时用 esbuild 插件把 `@codemirror/language`/`@codemirror/view` 换成桩模块——**esbuild 会摇掉宿主未引用的具名导出**，桩模块里的注入函数要走 `globalThis` 而不是具名导出，否则测试脚本拿不到。
+4. 夹具踩坑：`1.   foo` 的节点区间是 `[0,5)`（标记 2 字符 + 3 空格），首版夹具误写 `[0,6)` 导致两例有序标记的期望值对不上——「节点吞全部尾随空白」的区间端点要用字符位置数出来，不能目测。
+
+---
+
 ## 2.6.7 (2026-10-01)
 
 ### 阅读视图：后续行比首行多缩进一点点 —— markdown-it 的 `'<br>\n'` 被占位元素挤离行首

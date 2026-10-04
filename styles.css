@@ -780,6 +780,58 @@ body.mdrazor-current-line-highlight .markdown-source-view.mod-cm6 .cm-editor:not
 }
 
 /* ────────────────────────────────────────────────────────────────
+   Callout 增强：触屏编辑按钮
+   ────────────────────────────────────────────────────────────────
+   Obsidian 原生「编辑这个区块」按钮挂在 `.embed-actions` 容器上，容器默认
+   `opacity: 0`、仅悬停恢复（app.css 实证）——触屏设备没有悬停，按钮不可见；
+   且透明化的是容器，用户对按钮写 `opacity: 1 !important` 也救不回来（opacity:0
+   的父级把整个子树画成全透明，但 hit-testing 仍在——「看不见却摸得着」）。
+   本按钮由插件注入 callout widget，仅在不具备悬停能力的环境显示：
+   `@media (hover: none) and (pointer: coarse)`（iPad / 手机成立；桌面
+   触屏本 primary pointer 是鼠标、hover 可用，不成立）——桌面外观零变化，
+   原生按钮照常。位置与原生按钮一致（widget 右上角内侧）；widget 由核心设
+   position: relative，按钮的绝对定位以它为锚。仅编辑态隐藏（面板自带
+   完成/取消，留着会挡面板）。 */
+.mdrazor-callout-touch-edit-button {
+	display: none;
+	position: absolute;
+	top: var(--size-2-2);
+	inset-inline-end: var(--size-2-2);
+	z-index: 1;
+	align-items: center;
+	justify-content: center;
+	box-sizing: border-box;
+	width: 28px;
+	height: 28px;
+	padding: 0;
+	border: none;
+	border-radius: var(--embed-action-radius, var(--radius-m));
+	color: var(--embed-action-color, var(--text-muted));
+	background: var(--embed-actions-background, var(--background-modifier-hover));
+	-webkit-backdrop-filter: var(--embed-actions-blur, blur(4px));
+	backdrop-filter: var(--embed-actions-blur, blur(4px));
+	cursor: var(--cursor);
+}
+
+.mdrazor-callout-touch-edit-button svg {
+	width: 16px;
+	height: 16px;
+}
+
+@media (hover: none) and (pointer: coarse) {
+	.markdown-source-view.mod-cm6 .cm-embed-block.cm-callout > .mdrazor-callout-touch-edit-button {
+		display: flex;
+	}
+}
+
+/* 编辑态隐藏：面板自带完成/取消按钮 */
+.markdown-source-view.mod-cm6
+	.cm-embed-block.cm-callout.mdrazor-callout-widget-editing
+	.mdrazor-callout-touch-edit-button {
+	display: none;
+}
+
+/* ────────────────────────────────────────────────────────────────
    Callout 增强：就地编辑面板
    ────────────────────────────────────────────────────────────────
    实时预览的 callout 是 Obsidian 自己的块级 replace widget，渲染态下
@@ -1026,12 +1078,28 @@ body.mdrazor-current-line-highlight .markdown-source-view.mod-cm6 .cm-editor:not
 	transition: none;
 }
 
-/* 底部操作区：完成按钮右对齐，与正文同内边距 */
+/* 底部操作区：取消/完成按钮右对齐（取消为次要动作靠左），与正文同内边距 */
 .mdrazor-callout-editor-actions {
 	display: flex;
 	justify-content: flex-end;
 	gap: var(--size-4-2);
 	padding: 0 var(--size-4-2) var(--size-4-2);
+}
+
+.mdrazor-callout-editor-cancel {
+	font-size: var(--font-ui-smaller);
+	padding: 2px 10px;
+	border-radius: var(--radius-s);
+	background: transparent;
+	color: var(--text-muted);
+	border: 1px solid var(--background-modifier-border);
+	box-shadow: none;
+	cursor: var(--cursor);
+}
+
+.mdrazor-callout-editor-cancel:hover {
+	color: var(--text-normal);
+	background: var(--background-modifier-hover);
 }
 
 .mdrazor-callout-editor-done {

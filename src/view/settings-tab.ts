@@ -228,6 +228,23 @@ export class MDRazorSettingTab extends PluginSettingTab {
 			);
 
 		new Setting(panel)
+			.setName(tr('Callout 触屏编辑按钮', 'Callout Touch Edit Button'))
+			.setDesc(
+				tr(
+					'开启后，在不具备悬停能力的设备（iPad、手机等）上常驻显示 callout 右上角的编辑按钮（铅笔图标）。原生的「编辑这个区块」按钮由悬停控制显隐，触屏设备上无法呼出，只能盲点右上角；桌面悬停环境不受影响，本按钮不显示。「Callout 增强」关闭时本项不生效',
+					'When enabled, an edit button (pencil icon) stays visible at the top-right corner of every callout on devices without hover capability (iPad, phones, …). The native "Edit this block" button shows on hover only, so touch devices cannot bring it up and have to tap the corner blindly. Desktop hover environments are unaffected and will not show this button. Has no effect when "Callout Enhancement" is off',
+				),
+			)
+			.addToggle((toggle) =>
+				toggle
+					.setValue(this.plugin.settings.calloutTouchEditButton)
+					.onChange(async (value) => {
+						this.plugin.settings.calloutTouchEditButton = value;
+						await this.plugin.saveSettings();
+					}),
+			);
+
+		new Setting(panel)
 			.setName(tr('MD文档光标和滚轴位置持久化', 'Remember Cursor & Scroll Position'))
 			.setDesc(
 				tr(
