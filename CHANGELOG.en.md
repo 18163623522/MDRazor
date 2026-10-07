@@ -1,5 +1,15 @@
 ### Changelog
 
+**2.6.9** (2026-10-07) — Fixes reversed typing / characters landing outside the marks in Live Preview when the caret sits under a hidden range in an empty inline code span (pressing `` ` `` at the start of a line auto-pairs into an empty pair with the caret in the middle, where the DOM has no text to host the caret and every keystroke lands after the marks); the marks covering or pinching the caret now reveal briefly (matching native Live Preview) and hide again as soon as the first character is typed
+
+**Fixed**
+
+- **Live Preview: typing inside an empty inline code span came out reversed, outside the backticks (reported: typing `123456` rendered `654321`)** — With formatting marks always hidden, pressing `` ` `` at the start of a line makes Obsidian's auto-pairing (`autoPairMarkdown`) insert a pair and put the caret **between** the two backticks, while the parser builds the whole backtick run as a single node and the plugin hides that run as one range: the caret ends up **inside a hidden range**, where the DOM has no text to host it. Chromium normalises the DOM caret to just after the placeholder while CM6's state caret stays put, so every keystroke is inserted at that same position — characters land outside the marks and come out reversed (` ``321 `), and the symbol-boundary tooltip, reading the state caret, keeps showing `` `|` ``. The same degenerate position also occurs when the caret is pinched between two adjacent hidden ranges (empty spans split into two marks). The plugin now reveals the ranges that **cover or pinch** the caret (matching native Live Preview: asar evidence shows it emits no hide decoration when the cursor intersects a mark, plus a dedicated plugin that snaps the cursor out of hidden ranges), so the caret falls back onto real text and the insertion point becomes determinate; the marks hide again as soon as the first character is inserted. The rule lives in the pure module `caret-reveal.ts` (collapsed caret only; every other state is untouched), with a new offline regression, `npm run verify:caret` (20 assertions).
+
+**Improvements**
+
+- **Hidden Styling: caret visibility** — when the collapsed caret sits inside a hidden range or is pinched between two adjacent hidden ranges (degenerate positions such as an empty inline code span or an empty bold pair, where no text exists on either side of the caret), the marks at the caret reveal so the insertion point always lands on real text; they hide again as soon as the first character is typed — imperceptible in normal editing and visually consistent with native Live Preview, which reveals marks whenever the cursor intersects them.
+
 **2.6.8** (2026-10-04)
 
 **Added**

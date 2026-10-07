@@ -23,6 +23,7 @@ import {
 import { Prec, RangeSetBuilder, type Text } from '@codemirror/state';
 import { syntaxTree } from '@codemirror/language';
 import { MDRazorSettings, DEFAULT_SETTINGS } from '../../model/settings';
+import { revealCaretRanges } from './caret-reveal';
 
 /**
  * 模块级可变配置对象。
@@ -217,7 +218,7 @@ export function buildDecorations(view: EditorView): DecorationSet {
 
 	/* ---- Phase 1: 收集全部 decoration 到 entries 数组 ---- */
 
-	const entries: DecorationEntry[] = [];
+	let entries: DecorationEntry[] = [];
 	const tree = syntaxTree(view.state);
 
 	tree.iterate({
@@ -404,6 +405,21 @@ export function buildDecorations(view: EditorView): DecorationSet {
 			});
 		}
 	}
+
+	/* ---- Phase 1.5: 光标可见性保护 ---- */
+
+	// 折叠光标被隐藏区间盖住（区间内部）或夹住（两条相邻区间之间）时，
+	// 放开盖住 / 夹住光标的装饰 —— 这些位置 DOM 里没有文本可承载光标，
+	// Chromium 会把 DOM 光标规范化到占位元素之后、而 CM6 状态光标停在
+	// 原位，两者分叉后每个键入字符都插到同一位置：字符落到标记之外并
+	// 逐键倒序（实测 doc="``" pos=1 键入 123 得到 "``321"、光标停在 1，
+	// 符号边界提示持续显示 `|`；行首键入反引号时 Obsidian 自动配对插入
+	// 一对并把光标放在中间，是最常见的入口）。放开后与 Obsidian 原生
+	// 同态（原生在光标与标记相交时走 reveal 分支），光标落回真实文本、
+	// 落点确定；首个字符插入后标记与光标不再重叠，隐藏行为立即照旧。
+	// 判定与放开规则见 caret-reveal.ts（纯函数，离线回归 verify:caret）。
+	const mainSel = view.state.selection.main;
+	entries = revealCaretRanges(entries, mainSel.empty ? mainSel.head : null);
 
 	/* ---- Phase 2: 按 from 排序 ---- */
 

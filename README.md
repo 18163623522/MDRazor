@@ -26,7 +26,7 @@ MDRazor is an Obsidian plugin dedicated to honing your Markdown editing experien
 
 **中文**
 
-- **编辑体验** — 隐藏格式标记 · 空格可视化 · 符号边界提示（框内 `|` 与光标对齐 · 夜间模式弹框可见）· 鼠标/滚轮移动时行高亮 · 当前行高亮 · 打字机模式 · 点击同步（点击/拖拽选错行根治，含 mouseup 最终纠错）· callout 之后行点击/拖拽错位根治（块 widget 行盒空隙并入测量）· 编辑器测量守护（行高表陈旧点击偏移根治）· Callout 增强（单击保持渲染 · 就地编辑面板 · 触屏编辑按钮 · 取消/丢弃 · 正文自适应增高 · 候选下拉）· 行内代码双击复制 · 首行缩进（排除非正文块 · 跟随「严格换行」· 预览与阅读双端）· 光标与滚轴位置持久化
+- **编辑体验** — 隐藏格式标记 · 空格可视化 · 符号边界提示（框内 `|` 与光标对齐 · 夜间模式弹框可见）· 鼠标/滚轮移动时行高亮 · 当前行高亮 · 打字机模式 · 点击同步（点击/拖拽选错行根治，含 mouseup 最终纠错）· callout 之后行点击/拖拽错位根治（块 widget 行盒空隙并入测量）· 编辑器测量守护（行高表陈旧点击偏移根治）· Callout 增强（单击保持渲染 · 就地编辑面板 · 触屏编辑按钮 · 取消/丢弃 · 正文自适应增高 · 候选下拉）· 行内代码双击复制 · 行内代码光标可见性保护（空代码对输入不再倒序/跑出标记） · 首行缩进（排除非正文块 · 跟随「严格换行」· 预览与阅读双端）· 光标与滚轴位置持久化
 - **列表与结构** — 列表一体化（列一体化 / 勾选框一体化 / ← 选中勾选框字符 / 退格提升层级）· 回车软换行（任意单字符勾选框继承）· 选项聚焦 · 折叠同级列表/标题 · 活动行列表符号折叠 · 折叠项方向键穿越 · 目录聚焦 · 目录文件计数 · 批量删除空行（Markdown 感知）
 - **标签页与导航** — 默认在新标签页打开 · 内链/书签新标签页 · 垂直标签页 · 自动保存工作区
 - **命令与外观** — 自定义命令 · 隐藏命令 · 状态栏命令 · 右键菜单命令 · 图标选择 · 拖拽排序 · 左功能区管理 · 自动清理失联图片
@@ -34,7 +34,7 @@ MDRazor is an Obsidian plugin dedicated to honing your Markdown editing experien
 
 **English**
 
-- **Editing experience** — Hidden formatting marks · Whitespace visualization · Symbol boundary hint (tooltip `|` aligned with the caret · visible in dark mode) · Mouse/wheel line highlight · Current line highlight · Typewriter mode · Click sync (click/drag misplacement cure, incl. mouseup final correction) · Callout-following-row offset cure (block-widget line-box gap folded into measurement) · Measure guard (stale height-map click-offset cure) · Callout enhancement (single-click keeps rendering · in-place editor · touch edit button · cancel/discard · auto-growing body · suggestion dropdown) · Inline code double-click copy · First-line indent (non-body blocks excluded · follows "Strict line breaks" · Live Preview + Reading view) · Cursor & scroll position persistence
+- **Editing experience** — Hidden formatting marks · Whitespace visualization · Symbol boundary hint (tooltip `|` aligned with the caret · visible in dark mode) · Mouse/wheel line highlight · Current line highlight · Typewriter mode · Click sync (click/drag misplacement cure, incl. mouseup final correction) · Callout-following-row offset cure (block-widget line-box gap folded into measurement) · Measure guard (stale height-map click-offset cure) · Callout enhancement (single-click keeps rendering · in-place editor · touch edit button · cancel/discard · auto-growing body · suggestion dropdown) · Inline code double-click copy · Inline-code caret visibility guard (typing in an empty pair never comes out reversed or outside the marks) · First-line indent (non-body blocks excluded · follows "Strict line breaks" · Live Preview + Reading view) · Cursor & scroll position persistence
 - **Lists & structure** — List integration (list marks / checkboxes / ← selects checkbox character / backspace level promotion) · Enter soft break (any single-character checkbox inheritance) · Focus list item · Fold sibling lists/headings · Fold via list bullet on the active line · Arrow-key traversal of folded items · Folder focus · Folder file count · Markdown-aware empty-line cleanup
 - **Tabs & navigation** — Open in new tab by default · Wikilinks and bookmarks in new tabs · Vertical tabs · Workspace autosave
 - **Commands & appearance** — Custom commands · Hidden commands · Status-bar commands · Context-menu commands · Icon picker · Drag-and-drop ordering · Left-ribbon management · Orphan image cleanup
@@ -70,7 +70,7 @@ MDRazor is an Obsidian plugin dedicated to honing your Markdown editing experien
 
 #### ✂️ 隐藏样式
 
-隐藏 Markdown 标记符号，光标移入时自动显示。更干净的实时预览，零干扰。
+隐藏 Markdown 标记符号：标记默认不可见（含光标在格式单元内编辑时——光标处的隐藏标记由下方「符号边界提示」弹框展示），仅当光标被隐藏区间**盖住或夹住**时在该处短暂显形。更干净的实时预览，零干扰。
 
 以下每种格式可独立开关：
 
@@ -90,6 +90,7 @@ MDRazor is an Obsidian plugin dedicated to honing your Markdown editing experien
 所有隐藏格式共享以下特性：
 
 - 由于格式符号被隐藏，可以根据光标经过时光标的闪烁判断光标途径的距离。
+- **光标可见性保护**（2.6.9）— 光标落在隐藏区间内部或夹在两条隐藏区间之间时（空行内代码 `` `` ``、空加粗 `****` 等「光标两侧没有文本」的退化位置），光标所在处的标记自动显形——输入落点始终落在真实文本上，**不会出现字符倒序或跑到标记之外**（行首键入 `` ` `` 由自动配对产生一对、光标居中时必然触发，现已无此问题）；键入首个字符后标记立即恢复隐藏，提示弹框在光标处无隐藏标记时自然不弹。
 - **健壮性** — 兼容数学公式（`$..$`）与格式标记（`**..**` 等）共存的行内内容。即使 Obsidian 解析器在此类行上产生异常语法树，也不会导致编辑器崩溃，公式正文绝不会被误当作格式标记隐藏。
 
 👁️ **空格可视化** — 以半透明 `·` 标记显示空格位置，一目了然看清缩进和对齐。基于 CM6 视图范围迭代，仅处理可视行，性能开销极低。半透明样式不干扰编辑。已隐藏格式符号（如 `<span style="...">` HTML 标签）内的空格一并隐藏，不残留 `·`。作为隐藏样式区域中的一项独立开关。
@@ -269,9 +270,10 @@ Features are organized into the eight settings-panel areas; every item has its o
 
 #### ✂️ Hidden Styling
 
-Hide Markdown mark symbols, revealed automatically as the cursor passes. Cleaner Live Preview, zero distraction. Independent toggles for: bold `**`, italic `*`, highlight `==`, strikethrough `~~`, inline code `` ` ``, escape `\`, heading `#` (H1–H6, hidden only when followed by a space), wikilink `[[ ]]`, HTML hex color tags, HTML underline `<u>`, and HTML line tags `<span>` (any attributes; literal inside code blocks/math). **Paired hiding**: `<font>`/`<u>`/`<span>` hide only when their closing tag exists — unclosed tags stay visible so you can spot them. Shared robustness: inline content mixing math (`$..$`) with formatting never crashes the editor, and math bodies are never hidden as marks.
+Hide Markdown mark symbols: marks stay invisible by default — including while you edit inside a formatted span, where the boundary tooltip below shows the hidden marks at the caret — and reveal only where a hidden range **covers or pinches** the caret. Cleaner Live Preview, zero distraction. Independent toggles for: bold `**`, italic `*`, highlight `==`, strikethrough `~~`, inline code `` ` ``, escape `\`, heading `#` (H1–H6, hidden only when followed by a space), wikilink `[[ ]]`, HTML hex color tags, HTML underline `<u>`, and HTML line tags `<span>` (any attributes; literal inside code blocks/math). **Paired hiding**: `<font>`/`<u>`/`<span>` hide only when their closing tag exists — unclosed tags stay visible so you can spot them. Shared robustness: inline content mixing math (`$..$`) with formatting never crashes the editor, and math bodies are never hidden as marks.
 
 - 👁️ **Whitespace visualization** — spaces shown as translucent `·`, view-range based, near-zero cost; also hides spaces inside already-hidden HTML tags.
+- 🎯 **Caret visibility guard** (2.6.9) — when the caret sits inside a hidden range or is pinched between two adjacent hidden ranges (an empty inline code span, an empty bold pair — positions with no text on either side of the caret), the marks at the caret reveal so the insertion point always lands on real text: typing never comes out reversed or outside the marks (pressing `` ` `` at the start of a line auto-pairs into an empty pair with the caret in the middle, which used to trigger exactly this). The marks hide again as soon as the first character is typed, and the boundary tooltip simply does not appear where nothing is hidden.
 - 🔍 **Symbol boundary hint** — a tooltip under the cursor shows which side of a hidden marker the cursor is on (left/right symbol, complete combined marks like `***` never truncated), via the CM6 `showTooltip` system. **The `|` inside the tooltip is aligned exactly with the caret** (0px deviation measured): as the caret moves left/right inside a hidden marker the `|` stays pinned to it while only the tooltip's outline grows and shrinks, so the two no longer appear to drift apart. The alignment offset is measured against the real font after the tooltip mounts, and is re-measured automatically after zoom / font / pane-size changes. In dark mode the tooltip takes its own styling (raised surface + brighter border + heavier shadow) so it cannot vanish — a black shadow has no headroom to darken a near-black canvas.
 
 #### 🗑️ Left Ribbon
